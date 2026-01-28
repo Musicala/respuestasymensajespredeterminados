@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title>Mensajes Predeterminados · Musicala</title>
+
+  <!-- Tipografía opcional (si quieres 0 dependencias, bórralo) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <a class="skip" href="#main">Saltar al contenido</a>
+
+  <!-- Logo flotante (como tu versión original) -->
+  <a class="logo-fab" href="#" aria-label="Ir arriba" title="Ir arriba">
+    <img
+      src="https://static.wixstatic.com/media/85afce_3adb3865c88a492b93a8bf2dc69049c3~mv2.png"
+      alt="Logo Musicala"
+      loading="lazy"
+    />
+  </a>
+
+  <!-- Topbar -->
+  <header class="topbar" role="banner">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">📩</div>
+      <div class="brand-text">
+        <strong>Mensajes Predeterminados</strong>
+        <span>Musicala</span>
+      </div>
+    </div>
+
+    <div class="topbar-actions">
+      <button id="btnToggleEdit" class="btn btn-ghost" type="button" title="Activar modo edición">
+        Modo edición: <span id="editState" class="badge">OFF</span>
+      </button>
+
+      <button id="btnNew" class="btn btn-primary" type="button">
+        + Nuevo
+      </button>
+    </div>
+  </header>
+
+  <!-- Toast -->
+  <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <main id="main" class="page" role="main">
+    <!-- Panel -->
+    <section class="panel">
+      <div class="controls">
+        <div class="field">
+          <label for="searchInput">Buscar</label>
+          <input id="searchInput" type="search" placeholder="Buscar por categoría, atajo o texto…" autocomplete="off" />
+        </div>
+
+        <div class="field">
+          <label for="categorySelect">Categoría</label>
+          <select id="categorySelect">
+            <option value="">Todas</option>
+          </select>
+        </div>
+
+        <div class="field field-inline">
+          <span class="muted">Resultados</span>
+          <strong id="resultCount">0</strong>
+        </div>
+      </div>
+
+      <div class="statusline">
+        <span id="statusText" class="muted">Listo.</span>
+        <button id="btnReload" class="btn btn-ghost" type="button">Recargar</button>
+      </div>
+    </section>
+
+    <!-- Tabla -->
+    <section class="table-card" aria-label="Tabla de mensajes">
+      <div class="table-wrap" role="region" aria-label="Mensajes" tabindex="0">
+        <table class="table">
+          <thead>
+            <tr>
+              <th class="col-cat">Categoría</th>
+              <th class="col-short">Atajo</th>
+              <th>Mensaje</th>
+              <th class="col-actions" aria-label="Acciones"></th>
+            </tr>
+          </thead>
+          <tbody id="messageTableBody">
+            <!-- render en app.js -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="footer">
+      © Herramienta de Mensajes · Musicala · 2026
+    </footer>
+  </main>
+
+  <!-- Modal Crear/Editar -->
+  <div id="modalBackdrop" class="modal-backdrop" hidden></div>
+
+  <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" hidden>
+    <div class="modal-head">
+      <h2 id="modalTitle">Nuevo mensaje</h2>
+      <button id="btnCloseModal" class="icon-btn" type="button" aria-label="Cerrar">✕</button>
+    </div>
+
+    <form id="messageForm" class="modal-body">
+      <!-- id oculto para editar -->
+      <input id="msgId" type="hidden" />
+
+      <div class="grid">
+        <div class="field">
+          <label for="msgCategoria">Categoría</label>
+          <input id="msgCategoria" type="text" placeholder="Ej: Ventas / Confirmaciones / Cobranza" required />
+        </div>
+
+        <div class="field">
+          <label for="msgAtajo">Atajo</label>
+          <input id="msgAtajo" type="text" placeholder="Ej: /hola /pago /confirmar" required />
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="msgMensaje">Mensaje</label>
+        <textarea id="msgMensaje" rows="7" placeholder="Escribe el mensaje aquí…" required></textarea>
+        <div class="hint">Tip: usa saltos de línea normales. Se copian tal cual.</div>
+      </div>
+
+      <div class="modal-foot">
+        <button id="btnCancel" class="btn btn-ghost" type="button">Cancelar</button>
+        <button id="btnSave" class="btn btn-primary" type="submit">Guardar</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- App -->
+  <script src="./app.js"></script>
+</body>
+</html>
