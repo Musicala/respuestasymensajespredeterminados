@@ -6,10 +6,9 @@
   <meta name="color-scheme" content="light" />
   <title>Mensajes Predeterminados · Musicala</title>
 
-  <!-- Tipografía opcional (si quieres 0 dependencias, bórralo) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;800&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="./styles.css" />
 </head>
@@ -17,19 +16,9 @@
 <body>
   <a class="skip" href="#main">Saltar al contenido</a>
 
-  <!-- Logo flotante (como tu versión original) -->
-  <a class="logo-fab" href="#" aria-label="Ir arriba" title="Ir arriba">
-    <img
-      src="https://static.wixstatic.com/media/85afce_3adb3865c88a492b93a8bf2dc69049c3~mv2.png"
-      alt="Logo Musicala"
-      loading="lazy"
-    />
-  </a>
-
-  <!-- Topbar -->
   <header class="topbar" role="banner">
     <div class="brand">
-      <div class="brand-mark" aria-hidden="true">📩</div>
+      <img class="brand-logo" src="./logo.png" alt="Logo Musicala" loading="lazy" />
       <div class="brand-text">
         <strong>Mensajes Predeterminados</strong>
         <span>Musicala</span>
@@ -47,11 +36,50 @@
     </div>
   </header>
 
-  <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <main id="main" class="page" role="main">
-    <!-- Panel -->
+    <button id="btnAssistantWidget" class="assistant-fab" type="button" aria-controls="assistantPanel" aria-expanded="false">
+      <span aria-hidden="true">?</span>
+      <span>Preguntar</span>
+    </button>
+
+    <section id="assistantPanel" class="assistant-card" aria-labelledby="assistantTitle" hidden>
+      <div class="assistant-head">
+        <div class="assistant-avatar" aria-hidden="true">🤖</div>
+        <div>
+          <p class="eyebrow">Asistente local</p>
+          <h1 id="assistantTitle">MusiAsistente de respuestas</h1>
+          <p class="assistant-copy">
+            Pregúntale qué responder según el caso. Usa únicamente los mensajes cargados en esta herramienta, sin IA real ni inventos institucionales de esos que después toca explicar en una reunión incómoda.
+          </p>
+        </div>
+        <button id="btnCloseAssistant" class="icon-btn assistant-close" type="button" aria-label="Cerrar asistente">×</button>
+      </div>
+
+      <div class="assistant-form">
+        <label class="sr-only" for="assistantInput">Caso o pregunta</label>
+        <textarea id="assistantInput" rows="3" placeholder="Ej: ¿Qué le digo a un profe que llegó tarde? ¿Qué mensaje uso para recordar pagos?" autocomplete="off"></textarea>
+        <div class="assistant-actions">
+          <button id="btnAskAssistant" class="btn btn-primary" type="button">Buscar recomendación</button>
+          <button id="btnClearAssistant" class="btn btn-ghost" type="button">Limpiar</button>
+        </div>
+      </div>
+
+      <div class="assistant-examples" aria-label="Ejemplos de búsqueda">
+        <button class="chip" type="button" data-example="Qué le digo a un profe que llegó tarde">Profe llegó tarde</button>
+        <button class="chip" type="button" data-example="Mensaje para recordar pago pendiente a un acudiente">Pago pendiente</button>
+        <button class="chip" type="button" data-example="Cómo confirmo una clase o una sesión programada">Confirmar clase</button>
+        <button class="chip" type="button" data-example="Qué respondo si quieren cancelar o reprogramar">Cancelar o reprogramar</button>
+      </div>
+
+      <div id="assistantMeta" class="assistant-meta" aria-live="polite">
+        Carga los mensajes y escribe un caso para ver sugerencias.
+      </div>
+
+      <div id="assistantResults" class="assistant-results"></div>
+    </section>
+
     <section class="panel">
       <div class="controls">
         <div class="field">
@@ -78,7 +106,6 @@
       </div>
     </section>
 
-    <!-- Tabla -->
     <section class="table-card" aria-label="Tabla de mensajes">
       <div class="table-wrap" role="region" aria-label="Mensajes" tabindex="0">
         <table class="table">
@@ -90,9 +117,7 @@
               <th class="col-actions" aria-label="Acciones"></th>
             </tr>
           </thead>
-          <tbody id="messageTableBody">
-            <!-- render en app.js -->
-          </tbody>
+          <tbody id="messageTableBody"></tbody>
         </table>
       </div>
     </section>
@@ -102,7 +127,6 @@
     </footer>
   </main>
 
-  <!-- Modal Crear/Editar -->
   <div id="modalBackdrop" class="modal-backdrop" hidden></div>
 
   <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" hidden>
@@ -112,7 +136,6 @@
     </div>
 
     <form id="messageForm" class="modal-body">
-      <!-- id oculto para editar -->
       <input id="msgId" type="hidden" />
 
       <div class="grid">
@@ -140,7 +163,6 @@
     </form>
   </div>
 
-  <!-- App -->
   <script src="./app.js"></script>
 </body>
 </html>
