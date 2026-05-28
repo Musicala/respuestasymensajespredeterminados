@@ -13,8 +13,9 @@
 /** =========================
  *  CONFIG
  *  ========================= */
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxDNuK5r2Gi2g_xNy49qGtEQsGZeMqumckUJ7_iU9R1YOx0PRIv3fhilHfZgW6mYtrQWw/exec';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzleh9uvQB9JmyjlM-f8DBSF05GP2TaNy9Ugo5WSQAO-0uhWa3dtAve7Mk1ZrDV_YPLvw/exec';
 const API_KEY = 'MUSICALA_MSGS_2026';
+const BACKUP_MESSAGES_URL = './messages-backup.json';
 const HTTP_TIMEOUT_MS = 15000;
 const MIN_TOKEN_LEN = 2;
 const MAX_ASSISTANT_RESULTS = 5;
@@ -245,6 +246,22 @@ function hasDuplicateMessage({ id, categoria, atajo }) {
   return allMessages.some(m => String(m.id || '') !== String(id || '') && getMessageKey(m) === key);
 }
 
+function mergeMessages(primary, backup) {
+  const merged = [];
+  const seen = new Set();
+
+  [...(primary || []), ...(backup || [])].forEach(m => {
+    if (!m) return;
+    const key = `${normSearch(m.categoria)}|${normSearch(m.atajo)}|${normSearch(m.mensaje)}`;
+    if (!key.replace(/\|/g, '')) return;
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(m);
+  });
+
+  return merged;
+}
+
 function messageHaystack(m) {
   const cat = normSearch(m.categoria);
   const short = normSearch(m.atajo);
@@ -330,6 +347,14 @@ async function apiGetList() {
     throw new Error((data && data.error) ? data.error : 'Error cargando mensajes');
   }
   return Array.isArray(data.data) ? data.data : [];
+}
+
+async function loadBackupMessages() {
+  const data = await fetchJson(BACKUP_MESSAGES_URL, { method: 'GET' });
+  if (!Array.isArray(data)) {
+    throw new Error('El respaldo local de mensajes no tiene un formato valido.');
+  }
+  return data;
 }
 
 async function apiPost(action, payload) {
@@ -843,7 +868,27 @@ async function load() {
   setAssistantMeta('Cargando base de conocimiento…');
 
   try {
+    let loadedFromBackup = false;
+    let mergedWithBackup = false;
+    let remoteCount = 0;
+    let backupCount = 0;
     allMessages = await apiGetList();
+    remoteCount = allMessages.length;
+
+    if (!allMessages.length) {
+      allMessages = await loadBackupMessages();
+      loadedFromBackup = true;
+      backupCount = allMessages.length;
+    } else {
+      const backupMessages = await loadBackupMessages().catch(() => []);
+      backupCount = backupMessages.length;
+
+      if (backupMessages.length > allMessages.length) {
+        mergedWithBackup = true;
+        allMessages = backupMessages;
+      }
+    }
+
     allMessages = allMessages
       .filter(m => m && (m.activo !== false))
       .map(m => ({
@@ -860,8 +905,18 @@ async function load() {
     render();
     if (assistantResults && assistantResults.children.length) askAssistant();
 
-    setStatus(`Cargado: ${allMessages.length} mensajes.`);
-    setAssistantMeta(`Base local lista: ${allMessages.length} mensajes disponibles para recomendar.`);
+    if (loadedFromBackup) {
+      setStatus(`Cargado: ${allMessages.length} mensajes desde respaldo local. Apps Script respondio vacio.`);
+      setAssistantMeta(`Base local lista desde respaldo: ${allMessages.length} mensajes disponibles para recomendar.`);
+      toast('Apps Script respondio vacio; cargue el respaldo local.', 'warn');
+    } else if (mergedWithBackup) {
+      setStatus(`Cargado: ${allMessages.length} mensajes desde respaldo local completo. Apps Script solo tiene ${remoteCount}.`);
+      setAssistantMeta(`Base local completa: ${allMessages.length} mensajes disponibles para recomendar. Apps Script tiene ${remoteCount}; respaldo local tiene ${backupCount}.`);
+      toast('Cargue la base completa desde el respaldo local.', 'warn');
+    } else {
+      setStatus(`Cargado: ${allMessages.length} mensajes.`);
+      setAssistantMeta(`Base local lista: ${allMessages.length} mensajes disponibles para recomendar.`);
+    }
   } catch (err) {
     console.error(err);
     setStatus('Error cargando.');
