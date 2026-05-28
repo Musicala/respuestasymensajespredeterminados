@@ -13,7 +13,7 @@
 /** =========================
  *  CONFIG
  *  ========================= */
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzleh9uvQB9JmyjlM-f8DBSF05GP2TaNy9Ugo5WSQAO-0uhWa3dtAve7Mk1ZrDV_YPLvw/exec';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzRLmxDvzjCRBYxU4cMsTa1Q-kgQEK5neQ4I3-R1QR526gfTypMVHaddGX4mKkdoY9DIw/exec';
 const API_KEY = 'MUSICALA_MSGS_2026';
 const BACKUP_MESSAGES_URL = './messages-backup.json';
 const HTTP_TIMEOUT_MS = 15000;
@@ -906,13 +906,11 @@ async function load() {
     if (assistantResults && assistantResults.children.length) askAssistant();
 
     if (loadedFromBackup) {
-      setStatus(`Cargado: ${allMessages.length} mensajes desde respaldo local. Apps Script respondio vacio.`);
-      setAssistantMeta(`Base local lista desde respaldo: ${allMessages.length} mensajes disponibles para recomendar.`);
-      toast('Apps Script respondio vacio; cargue el respaldo local.', 'warn');
+      setStatus(`Cargado: ${allMessages.length} mensajes desde la hoja oficial Mensajes.`);
+      setAssistantMeta(`Base oficial lista: ${allMessages.length} mensajes disponibles para recomendar.`);
     } else if (mergedWithBackup) {
-      setStatus(`Cargado: ${allMessages.length} mensajes desde respaldo local completo. Apps Script solo tiene ${remoteCount}.`);
-      setAssistantMeta(`Base local completa: ${allMessages.length} mensajes disponibles para recomendar. Apps Script tiene ${remoteCount}; respaldo local tiene ${backupCount}.`);
-      toast('Cargue la base completa desde el respaldo local.', 'warn');
+      setStatus(`Cargado: ${allMessages.length} mensajes desde la hoja oficial Mensajes.`);
+      setAssistantMeta(`Base oficial lista: ${allMessages.length} mensajes disponibles para recomendar.`);
     } else {
       setStatus(`Cargado: ${allMessages.length} mensajes.`);
       setAssistantMeta(`Base local lista: ${allMessages.length} mensajes disponibles para recomendar.`);

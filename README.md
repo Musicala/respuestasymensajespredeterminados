@@ -26,7 +26,7 @@ El frontend ya envía `id` al editar. Si aun así se duplican mensajes, el probl
 
 1. Abre el proyecto de Apps Script que usa la URL configurada en `app.js`.
 2. Reemplaza el contenido del archivo principal por el contenido de `Code.gs`.
-3. Verifica que la hoja se llame exactamente `Mensajes predeterminados en Español`, o cambia `SHEET_NAME` en `Code.gs`.
+3. Verifica que la hoja oficial se llame exactamente `Mensajes`, o cambia `SHEET_NAME` en `Code.gs`.
 4. Verifica que la API key sea la misma en ambos archivos:
    - `app.js`: `API_KEY`
    - `Code.gs`: `CONFIG.API_KEY`
