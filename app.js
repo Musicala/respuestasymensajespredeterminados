@@ -19,6 +19,8 @@ const BACKUP_MESSAGES_URL = './messages-backup.json';
 const HTTP_TIMEOUT_MS = 15000;
 const MIN_TOKEN_LEN = 2;
 const MAX_ASSISTANT_RESULTS = 5;
+const ASSISTANT_FAVORITES_KEY = 'musicala.assistant.favorites.v1';
+const ASSISTANT_RECENTS_KEY = 'musicala.assistant.recents.v1';
 
 /** =========================
  *  STATE
@@ -66,6 +68,7 @@ const assistantMeta    = $('#assistantMeta');
 const assistantPanel   = $('#assistantPanel');
 const btnAssistantWidget = $('#btnAssistantWidget');
 const btnCloseAssistant = $('#btnCloseAssistant');
+const assistantQuickChips = $('#assistantQuickChips');
 
 /** =========================
  *  CONOCIMIENTO LOCAL
@@ -197,6 +200,18 @@ function unique(arr) {
   return Array.from(new Set(arr.filter(Boolean)));
 }
 
+function uniqueByNorm(arr) {
+  const seen = new Set();
+  const out = [];
+  for (const item of arr || []) {
+    const key = normSearch(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
 function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -241,6 +256,10 @@ function getMessageKey(m) {
   return `${normSearch(m?.categoria)}|${normSearch(m?.atajo)}`;
 }
 
+function getMessageStorageKey(m) {
+  return `${normSearch(m?.categoria)}|${normSearch(m?.atajo)}|${normSearch(m?.mensaje).slice(0, 80)}`;
+}
+
 function hasDuplicateMessage({ id, categoria, atajo }) {
   const key = `${normSearch(categoria)}|${normSearch(atajo)}`;
   return allMessages.some(m => String(m.id || '') !== String(id || '') && getMessageKey(m) === key);
@@ -262,21 +281,145 @@ function mergeMessages(primary, backup) {
   return merged;
 }
 
+function getProjectKnowledge() {
+  const knowledge = window.MUSICALA_PROJECT_KNOWLEDGE;
+  return knowledge && typeof knowledge === 'object' ? knowledge : {};
+}
+
+function getRealCategories() {
+  return uniqueByNorm(allMessages.map(m => (m.categoria || '').trim()).filter(Boolean));
+}
+
+function normalizeIntent(intent, source = 'base') {
+  return {
+    id: String(intent?.id || intent?.label || source).trim(),
+    label: String(intent?.label || intent?.id || 'Contexto relacionado').trim(),
+    keywords: uniqueByNorm(intent?.keywords || []),
+    priorityFields: uniqueByNorm(intent?.priorityFields || intent?.keywords || []),
+    reason: intent?.reason || '',
+    source
+  };
+}
+
+function buildAssistantKnowledge() {
+  const project = getProjectKnowledge();
+  const projectIntents = Array.isArray(project.intents) ? project.intents : [];
+  const projectSynonyms = Array.isArray(project.synonymGroups) ? project.synonymGroups : [];
+  const categoryAliases = project.categoryAliases && typeof project.categoryAliases === 'object'
+    ? project.categoryAliases
+    : {};
+  const realCategories = getRealCategories();
+  const categoryKeywordGroups = realCategories.map(cat => uniqueByNorm([
+    cat,
+    ...tokenize(cat),
+    ...(categoryAliases[cat] || [])
+  ]));
+
+  return {
+    project,
+    intents: [...KNOWLEDGE_INTENTS.map(i => normalizeIntent(i, 'base')), ...projectIntents.map(i => normalizeIntent(i, 'project'))],
+    synonymGroups: [...SYNONYM_GROUPS, ...projectSynonyms, ...categoryKeywordGroups],
+    categoryAliases,
+    realCategories,
+    audiences: project.organization?.audiences || [],
+    tone: project.tone || [],
+    rules: project.responseRules || [],
+    quickSearches: project.quickSearches || []
+  };
+}
+
+function getCategoryAliases(category) {
+  const knowledge = getProjectKnowledge();
+  const aliases = knowledge.categoryAliases && typeof knowledge.categoryAliases === 'object'
+    ? knowledge.categoryAliases
+    : {};
+  const catNorm = normSearch(category);
+  const out = [];
+
+  Object.entries(aliases).forEach(([canonical, values]) => {
+    const group = [canonical, ...(Array.isArray(values) ? values : [])];
+    if (group.map(normSearch).includes(catNorm)) out.push(...group);
+  });
+
+  return uniqueByNorm(out);
+}
+
+function expandTokensWithKnowledge(tokens, knowledge = buildAssistantKnowledge()) {
+  const expanded = new Set(tokens);
+  for (const tok of tokens) {
+    for (const group of knowledge.synonymGroups || []) {
+      const normalizedGroup = (group || []).map(normSearch).filter(Boolean);
+      if (normalizedGroup.includes(tok)) normalizedGroup.forEach(v => expanded.add(v));
+    }
+  }
+  return Array.from(expanded);
+}
+
+function getStorageArray(key) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function setStorageArray(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value || []));
+  } catch (_) {}
+}
+
+function getFavoriteKeys() {
+  return getStorageArray(ASSISTANT_FAVORITES_KEY);
+}
+
+function isFavoriteMessage(message) {
+  return getFavoriteKeys().includes(getMessageStorageKey(message));
+}
+
+function toggleFavoriteMessage(message) {
+  const key = getMessageStorageKey(message);
+  const favorites = getFavoriteKeys();
+  const next = favorites.includes(key) ? favorites.filter(item => item !== key) : [key, ...favorites].slice(0, 80);
+  setStorageArray(ASSISTANT_FAVORITES_KEY, next);
+  renderQuickChips();
+  if (assistantInput && assistantInput.value.trim()) askAssistant();
+}
+
+function addRecentMessage(message) {
+  if (!message) return;
+  const entry = {
+    key: getMessageStorageKey(message),
+    categoria: message.categoria || '',
+    atajo: message.atajo || '',
+    mensaje: message.mensaje || '',
+    copiedAt: new Date().toISOString()
+  };
+  const current = getStorageArray(ASSISTANT_RECENTS_KEY).filter(item => item && item.key !== entry.key);
+  setStorageArray(ASSISTANT_RECENTS_KEY, [entry, ...current].slice(0, 10));
+  renderQuickChips();
+}
+
 function messageHaystack(m) {
   const cat = normSearch(m.categoria);
   const short = normSearch(m.atajo);
   const msg = normSearch(m.mensaje);
-  return { cat, short, msg, all: `${cat} ${short} ${msg}` };
+  const aliases = getCategoryAliases(m.categoria).map(normSearch).join(' ');
+  return { cat, short, msg, aliases, all: `${cat} ${short} ${msg} ${aliases}` };
 }
 
 function scoreMatch(haystack, tokens) {
   let score = 0;
-  for (const tok of tokens) {
+  const knowledge = buildAssistantKnowledge();
+  const expanded = expandTokensWithKnowledge(tokens, knowledge);
+  for (const tok of expanded) {
     if (!tok) continue;
     if (!haystack.all.includes(tok)) continue;
     score += 1;
     if (haystack.short.includes(tok)) score += 2;
     if (haystack.cat.includes(tok)) score += 2;
+    if (haystack.aliases.includes(tok)) score += 2;
     const re = new RegExp(`\\b${escapeRegExp(tok)}`, 'g');
     if (re.test(haystack.all)) score += 1;
   }
@@ -306,6 +449,20 @@ function setSavingButton(on) {
   const fallback = modalMode === 'edit' ? 'Guardar cambios' : 'Crear mensaje';
   btnSave.textContent = btnSave.dataset.originalText || fallback;
   delete btnSave.dataset.originalText;
+}
+
+function initAssistantAvatars() {
+  document.querySelectorAll('.assistant-avatar-img').forEach(img => {
+    img.addEventListener('error', () => {
+      img.closest('.assistant-avatar, .assistant-fab-avatar')?.classList.add('avatar-failed');
+    }, { once: true });
+    img.addEventListener('load', () => {
+      img.closest('.assistant-avatar, .assistant-fab-avatar')?.classList.remove('avatar-failed');
+    }, { once: true });
+    if (img.complete && img.naturalWidth === 0) {
+      img.closest('.assistant-avatar, .assistant-fab-avatar')?.classList.add('avatar-failed');
+    }
+  });
 }
 
 /** =========================
@@ -446,20 +603,21 @@ function populateCategoryFilter() {
 
 function applyFilters() {
   const rawQ = searchInput ? searchInput.value : '';
-  const tokens = tokenize(rawQ);
+  const tokens = tokenize(rawQ, { removeStopwords: true });
+  const expandedTokens = expandTokensWithKnowledge(tokens);
   const cat = (categorySelect ? categorySelect.value : '').trim();
 
   filtered = allMessages.filter(m => {
     const h = messageHaystack(m);
-    const matchesText = tokens.length === 0 ? true : tokens.every(tok => h.all.includes(tok));
+    const matchesText = expandedTokens.length === 0 ? true : scoreMatch(h, expandedTokens) > 0;
     const matchesCat = !cat || (m.categoria || '').trim() === cat;
     return matchesText && matchesCat;
   });
 
-  if (tokens.length) {
+  if (expandedTokens.length) {
     filtered.sort((m1, m2) => {
-      const s1 = scoreMatch(messageHaystack(m1), tokens);
-      const s2 = scoreMatch(messageHaystack(m2), tokens);
+      const s1 = scoreMatch(messageHaystack(m1), expandedTokens);
+      const s2 = scoreMatch(messageHaystack(m2), expandedTokens);
       if (s2 !== s1) return s2 - s1;
       const c = (m1.categoria || '').localeCompare(m2.categoria || '', 'es', { sensitivity: 'base' });
       if (c !== 0) return c;
@@ -522,7 +680,7 @@ function render() {
     btnCopy.type = 'button';
     btnCopy.className = 'copy-btn';
     btnCopy.textContent = 'Copiar';
-    btnCopy.addEventListener('click', () => copyMessage(m.mensaje || ''));
+    btnCopy.addEventListener('click', () => copyMessage(m.mensaje || '', m));
 
     tdMsg.appendChild(msgWrap);
     tdMsg.appendChild(btnCopy);
@@ -578,23 +736,16 @@ function render() {
  *  MUSIASISTENTE LOCAL
  *  ========================= */
 function expandTokens(tokens) {
-  const expanded = new Set(tokens);
-  for (const tok of tokens) {
-    for (const group of SYNONYM_GROUPS) {
-      const normalizedGroup = group.map(normSearch);
-      if (normalizedGroup.includes(tok)) normalizedGroup.forEach(v => expanded.add(v));
-    }
-  }
-  return Array.from(expanded);
+  return expandTokensWithKnowledge(tokens);
 }
 
-function detectIntents(queryTokens, rawQuery) {
+function detectIntents(queryTokens, rawQuery, knowledge = buildAssistantKnowledge()) {
   const queryNorm = normSearch(rawQuery);
-  const expanded = expandTokens(queryTokens);
+  const expanded = expandTokensWithKnowledge(queryTokens, knowledge);
 
-  return KNOWLEDGE_INTENTS
+  return knowledge.intents
     .map(intent => {
-      const normalizedKeywords = intent.keywords.map(normSearch);
+      const normalizedKeywords = (intent.keywords || []).map(normSearch);
       let score = 0;
       const matched = [];
 
@@ -616,21 +767,98 @@ function detectIntents(queryTokens, rawQuery) {
     .slice(0, 3);
 }
 
-function scoreAssistantMessage(message, tokens, intents) {
+function detectCaseContext(query, intents = []) {
+  const q = normSearch(query);
+  const hit = words => words.some(w => q.includes(normSearch(w)));
+  const labels = [];
+  const guide = {
+    type: 'Caso general',
+    audience: 'Por definir',
+    tone: 'Claro, cercano y respetuoso.',
+    recommended: intents[0]?.label || 'Usar el mensaje mas cercano de la base.',
+    review: ['nombre de la persona', 'datos especificos del caso']
+  };
+
+  if (hit(['venta', 'comercial', 'interesado', 'cliente', 'cotizacion', 'precio', 'inscripcion', 'matricula'])) labels.push('Caso comercial');
+  if (hit(['pago', 'cartera', 'factura', 'mora', 'mensualidad', 'cuenta de cobro'])) labels.push('Caso administrativo');
+  if (hit(['clase', 'docente', 'estudiante', 'academico', 'bitacora', 'diagnostico', 'asistencia'])) labels.push('Caso academico');
+  if (hit(['queja', 'reclamo', 'inconformidad', 'molesto', 'grave', 'delicado', 'malestar'])) labels.push('Delicado');
+  if (hit(['urgente', 'ya', 'hoy', 'inmediato', 'emergencia', 'prioritario'])) labels.push('Urgente');
+  if (hit(['interno', 'equipo', 'coordinacion', 'asistente', 'reporte', 'protocolo'])) labels.push('Interno');
+  if (hit(['familia', 'acudiente', 'mama', 'papa', 'padre', 'madre'])) labels.push('Acudiente/familia');
+  if (hit(['docente', 'profe', 'profesor', 'profesora'])) labels.push('Docente');
+  if (hit(['estudiante', 'alumno', 'nino', 'nina', 'joven'])) labels.push('Estudiante');
+  if (hit(['empresa', 'aliado', 'fsa', 'colegio', 'jardin', 'fondo'])) labels.push('Empresa/aliado');
+  if (!labels.some(label => ['Interno', 'Docente'].includes(label))) labels.push('Externo');
+
+  const topIntent = intents[0]?.id || '';
+  if (topIntent.includes('queja') || labels.includes('Delicado')) {
+    guide.type = 'Reclamo / inconformidad';
+    guide.tone = 'Responder con empatia, no discutir y no prometer solucion sin validar.';
+    guide.review = ['estudiante', 'sede', 'fecha', 'docente involucrado', 'antecedentes del caso'];
+  } else if (topIntent.includes('pago') || labels.includes('Caso administrativo')) {
+    guide.type = 'Cartera / pago pendiente';
+    guide.tone = 'Cordial, claro y firme, sin sonar agresivo.';
+    guide.review = ['valor', 'fecha limite', 'medio de pago', 'estado real de cartera'];
+  } else if (topIntent.includes('docente') || hit(['docente enfermo', 'profe enfermo', 'llego tarde', 'ausencia docente'])) {
+    guide.type = 'Reemplazo / novedad docente';
+    guide.tone = labels.includes('Interno') ? 'Interno, claro y rapido.' : 'Sereno y cuidadoso con la informacion.';
+    guide.review = ['horario', 'sede', 'grupo o estudiante', 'disponibilidad de reemplazo'];
+  } else if (topIntent.includes('venta') || labels.includes('Caso comercial')) {
+    guide.type = 'Informacion comercial / seguimiento';
+    guide.tone = 'Cercano, claro y orientado a resolver la duda sin presionar de mas.';
+    guide.review = ['modalidad', 'edad', 'area artistica', 'sede o ciudad', 'datos que faltan'];
+  }
+
+  if (labels.includes('Acudiente/familia')) guide.audience = 'Familia / acudiente';
+  else if (labels.includes('Docente')) guide.audience = 'Docente';
+  else if (labels.includes('Estudiante')) guide.audience = 'Estudiante';
+  else if (labels.includes('Empresa/aliado')) guide.audience = 'Empresa / aliado';
+
+  return { labels: unique(labels), guide };
+}
+
+function getPlaceholders(text) {
+  const value = String(text || '');
+  const patterns = [
+    /\[Nombre\]/gi,
+    /\[Nombre del estudiante\]/gi,
+    /\[Nombre del docente\]/gi,
+    /\*Estudiante\*/gi,
+    /\*Docente\*/gi,
+    /\[Fecha\]/gi,
+    /\[Hora\]/gi,
+    /\[Sede\]/gi,
+    /\[Valor\]/gi,
+    /\[Link\]/gi
+  ];
+  return unique(patterns.flatMap(re => value.match(re) || []));
+}
+
+function formatForWhatsApp(text) {
+  return String(text || '').replace(/\*\*([^*\n][\s\S]*?[^*\n])\*\*/g, '*$1*');
+}
+
+function scoreAssistantMessage(message, tokens, intents, context, knowledge = buildAssistantKnowledge(), rawQuery = '') {
   const h = messageHaystack(message);
-  const expanded = expandTokens(tokens);
+  const expanded = expandTokensWithKnowledge(tokens, knowledge);
+  const queryNorm = normSearch(rawQuery);
   let score = 0;
   const reasons = [];
 
   for (const tok of expanded) {
     if (!tok || STOPWORDS.has(tok)) continue;
     if (h.short.includes(tok)) {
-      score += 5;
+      score += 6;
       reasons.push(`atajo: ${tok}`);
     }
     if (h.cat.includes(tok)) {
+      score += 5;
+      reasons.push(`categoria: ${tok}`);
+    }
+    if (h.aliases.includes(tok)) {
       score += 4;
-      reasons.push(`categoría: ${tok}`);
+      reasons.push(`alias: ${tok}`);
     }
     if (h.msg.includes(tok)) {
       score += 2;
@@ -640,11 +868,12 @@ function scoreAssistantMessage(message, tokens, intents) {
 
   for (const intent of intents) {
     let intentHits = 0;
-    const fields = [...intent.priorityFields, ...intent.keywords].map(normSearch);
+    const fields = [...(intent.priorityFields || []), ...(intent.keywords || [])].map(normSearch);
     for (const kw of fields) {
       if (!kw) continue;
-      if (h.cat.includes(kw)) intentHits += 3;
-      if (h.short.includes(kw)) intentHits += 3;
+      if (h.cat.includes(kw)) intentHits += 4;
+      if (h.short.includes(kw)) intentHits += 4;
+      if (h.aliases.includes(kw)) intentHits += 3;
       if (h.msg.includes(kw)) intentHits += 1;
     }
     if (intentHits > 0) {
@@ -659,20 +888,49 @@ function scoreAssistantMessage(message, tokens, intents) {
     reasons.push('frase casi literal');
   }
 
+  const meaningfulPhrases = queryNorm
+    .split(/\s+(?:y|o|para|con|de|a|que)\s+/)
+    .filter(p => p.length > 8);
+  meaningfulPhrases.forEach(phrase => {
+    if (phrase && h.all.includes(phrase)) {
+      score += 5;
+      reasons.push('frase completa');
+    }
+  });
+
+  for (const audience of knowledge.audiences || []) {
+    const a = normSearch(audience);
+    if (a && queryNorm.includes(a) && h.all.includes(a)) {
+      score += 3;
+      reasons.push(`publico: ${audience}`);
+    }
+  }
+
+  if (context.labels.includes('Urgente') && /urgente|emergencia|hoy|inmediato|prioritario/.test(h.all)) {
+    score += 5;
+    reasons.push('urgencia');
+  }
+  if (context.labels.includes('Delicado') && /queja|reclamo|inconformidad|disculpa|lamentamos|validar|coordinacion/.test(h.all)) {
+    score += 6;
+    reasons.push('tono delicado');
+  }
+
   return { score, reasons: unique(reasons).slice(0, 4) };
 }
 
 function assistantSearch(query) {
   const baseTokens = tokenize(query, { removeStopwords: true });
-  const intents = detectIntents(baseTokens, query);
+  const knowledge = buildAssistantKnowledge();
+  const intents = detectIntents(baseTokens, query, knowledge);
+  const context = detectCaseContext(query, intents);
 
   if (!baseTokens.length && !intents.length) {
-    return { intents, results: [], tokens: baseTokens };
+    return { intents, results: [], tokens: baseTokens, context, knowledge };
   }
 
   const scored = allMessages
     .map(message => {
-      const scoring = scoreAssistantMessage(message, baseTokens, intents);
+      const scoring = scoreAssistantMessage(message, baseTokens, intents, context, knowledge, query);
       return { message, score: scoring.score, reasons: scoring.reasons };
     })
     .filter(item => item.score > 0)
@@ -682,9 +940,8 @@ function assistantSearch(query) {
     })
     .slice(0, MAX_ASSISTANT_RESULTS);
 
-  return { intents, results: scored, tokens: baseTokens };
+  return { intents, results: scored, tokens: baseTokens, context, knowledge };
 }
-
 function clearAssistantResults() {
   if (assistantInput) assistantInput.value = '';
   if (assistantResults) assistantResults.innerHTML = '';
@@ -718,33 +975,137 @@ function renderAssistantEmpty(text) {
   assistantResults.appendChild(div);
 }
 
+function getFavoriteMessages() {
+  const keys = new Set(getFavoriteKeys());
+  return allMessages.filter(m => keys.has(getMessageStorageKey(m)));
+}
+
+function getRecentMessages() {
+  return getStorageArray(ASSISTANT_RECENTS_KEY).map(item => ({
+    id: '',
+    categoria: item.categoria || '',
+    atajo: item.atajo || '',
+    mensaje: item.mensaje || '',
+    activo: true
+  })).filter(m => m.categoria || m.atajo || m.mensaje);
+}
+
+function renderSavedAssistantList(title, messages) {
+  if (!assistantResults) return;
+  assistantResults.innerHTML = '';
+  setAssistantMeta(`${title}: ${messages.length} mensaje(s) guardados localmente.`);
+  if (!messages.length) {
+    renderAssistantEmpty(title === 'Favoritos'
+      ? 'Todavia no hay favoritos. Marca mensajes recomendados para tenerlos a mano.'
+      : 'Todavia no hay recientes. Los ultimos mensajes copiados apareceran aqui.');
+    return;
+  }
+  renderAssistantResults({
+    intents: [],
+    tokens: ['guardados'],
+    context: { labels: [title], guide: { type: title, audience: 'Uso interno', tone: 'Revisar datos antes de enviar.', recommended: 'Mensajes guardados localmente', review: ['placeholders', 'datos del caso'] } },
+    results: messages.map(message => ({ message, score: 20, reasons: [title] })),
+    knowledge: buildAssistantKnowledge()
+  });
+}
+
+function renderQuickChips() {
+  if (!assistantQuickChips) return;
+  const knowledge = buildAssistantKnowledge();
+  const base = knowledge.quickSearches.length ? knowledge.quickSearches : [
+    { label: 'Favoritos', query: '__favorites__' },
+    { label: 'Recientes', query: '__recent__' },
+    { label: 'Ventas', query: 'ventas informacion comercial interesado' },
+    { label: 'Pagos', query: 'recordar pago pendiente cartera' },
+    { label: 'Reprogramacion', query: 'cancelar reprogramar recuperar clase' },
+    { label: 'Docentes', query: 'docente profe reemplazo tarde enfermo' },
+    { label: 'FSA', query: 'FSA empresa aliado fondo empleados' },
+    { label: 'Vacacionales', query: 'vacacionales talleres informacion' }
+  ];
+  assistantQuickChips.innerHTML = '';
+  base.forEach(item => {
+    const btn = document.createElement('button');
+    btn.className = 'chip';
+    btn.type = 'button';
+    btn.textContent = item.label;
+    btn.addEventListener('click', () => {
+      if (!assistantInput) return;
+      assistantInput.value = item.query;
+      askAssistant();
+    });
+    assistantQuickChips.appendChild(btn);
+  });
+}
+
+function renderAssistantGuide(context, topMessage) {
+  const guide = context?.guide;
+  if (!assistantResults || !guide) return;
+
+  const box = document.createElement('section');
+  box.className = 'assistant-guide';
+
+  const title = document.createElement('h2');
+  title.textContent = 'Guia rapida para responder';
+  box.appendChild(title);
+
+  const rows = [
+    ['Tipo de caso', guide.type],
+    ['A quien va dirigido', guide.audience],
+    ['Cuidado de tono', guide.tone],
+    ['Mensaje recomendado', topMessage ? `${topMessage.categoria || 'Sin categoria'} - ${topMessage.atajo || 'Sin atajo'}` : guide.recommended],
+    ['Que revisar antes de enviar', (guide.review || []).join(', ')]
+  ];
+
+  rows.forEach(([label, value]) => {
+    const row = document.createElement('p');
+    const strong = document.createElement('strong');
+    strong.textContent = `${label}: `;
+    row.appendChild(strong);
+    row.appendChild(document.createTextNode(value || 'Por definir'));
+    box.appendChild(row);
+  });
+
+  assistantResults.appendChild(box);
+}
+
+function createMessageSimilar(message) {
+  const baseAtajo = String(message?.atajo || 'mensaje similar').trim();
+  openModal('create', {
+    categoria: message?.categoria || '',
+    atajo: `${baseAtajo} similar`.slice(0, 90),
+    mensaje: message?.mensaje || ''
+  });
+  if (modalTitle) modalTitle.textContent = 'Crear mensaje similar';
+  if (btnSave) btnSave.textContent = 'Crear mensaje';
+}
+
 function renderAssistantResults(payload) {
   if (!assistantResults) return;
   assistantResults.innerHTML = '';
 
-  const { intents, results, tokens } = payload;
+  const { intents, results, tokens, context } = payload;
 
   if (!allMessages.length) {
-    renderAssistantEmpty('Primero hay que cargar mensajes. Sin base de conocimiento, el bot queda opinando como comité sin acta.');
+    renderAssistantEmpty('Primero hay que cargar mensajes. Sin base de conocimiento, MusiAsistente no tiene de donde recomendar.');
     return;
   }
 
   if (!tokens.length && !intents.length) {
-    renderAssistantEmpty('Escribe un caso un poco más específico. Por ejemplo: “profe llegó tarde”, “recordar pago” o “confirmar clase”.');
+    renderAssistantEmpty('Escribe un caso un poco mas especifico. Por ejemplo: "profe llego tarde", "recordar pago" o "confirmar clase".');
     return;
   }
 
   if (!results.length) {
-    const intentLabel = intents.length ? ` Detecté posible contexto: ${intents.map(i => i.label).join(', ')}.` : '';
-    renderAssistantEmpty(`No encontré un mensaje exacto en la base cargada.${intentLabel} Crea un mensaje predeterminado para este caso y luego el asistente ya podrá recomendarlo.`);
+    const intentLabel = intents.length ? ` Detecte posible contexto: ${intents.map(i => i.label).join(', ')}.` : '';
+    renderAssistantEmpty(`No encontre un mensaje exacto en la base cargada.${intentLabel} Crea un mensaje predeterminado para este caso y luego el asistente podra recomendarlo.`);
     return;
   }
 
-  const intentSummary = intents.length
-    ? `Contexto detectado: ${intents.map(i => i.label).join(' · ')}`
-    : 'Contexto detectado por coincidencias de texto.';
-
-  setAssistantMeta(`${intentSummary}. ${results.length} sugerencia(s) encontradas.`);
+  const contextLabels = context?.labels?.length ? context.labels : ['Coincidencias de texto'];
+  const intentLabels = intents.map(i => i.label).slice(0, 2);
+  const summaryParts = [...contextLabels, ...intentLabels].slice(0, 4);
+  setAssistantMeta(`Contexto detectado: ${summaryParts.join(' · ')}. ${results.length} sugerencias encontradas.`);
+  renderAssistantGuide(context, results[0]?.message);
 
   for (const item of results) {
     const { message, score, reasons } = item;
@@ -756,33 +1117,62 @@ function renderAssistantResults(payload) {
 
     const title = document.createElement('h3');
     title.className = 'recommendation-title';
-    title.textContent = `${message.categoria || 'Sin categoría'} · ${message.atajo || 'Sin atajo'}`;
+    title.textContent = `${message.categoria || 'Sin categoria'} · ${message.atajo || 'Sin atajo'}`;
 
     const scorePill = document.createElement('span');
     scorePill.className = 'score-pill';
-    scorePill.textContent = `Afinidad ${Math.min(99, Math.max(1, Math.round(score * 4)))}%`;
+    scorePill.textContent = `Afinidad ${Math.min(99, Math.max(1, Math.round(score * 3)))}%`;
 
     top.appendChild(title);
     top.appendChild(scorePill);
+
+    const badges = document.createElement('div');
+    badges.className = 'assistant-badges';
+    [...(context?.labels || []), ...reasons].slice(0, 5).forEach(label => {
+      const badge = document.createElement('span');
+      badge.className = 'assistant-badge';
+      badge.textContent = label;
+      badges.appendChild(badge);
+    });
 
     const reason = document.createElement('p');
     reason.className = 'recommendation-reason';
     reason.textContent = reasons.length
       ? `Recomendado por: ${reasons.join(', ')}.`
-      : 'Recomendado por coincidencia general con tu búsqueda.';
+      : 'Recomendado por coincidencia general con tu busqueda.';
 
     const body = document.createElement('div');
     body.className = 'recommendation-message';
     body.appendChild(safeMessageToNodes(message.mensaje || ''));
 
+    const placeholders = getPlaceholders(message.mensaje || '');
+    let placeholderNote = null;
+    if (placeholders.length) {
+      placeholderNote = document.createElement('div');
+      placeholderNote.className = 'placeholder-alert';
+      placeholderNote.textContent = 'Este mensaje tiene datos por completar antes de enviarlo.';
+    }
+
     const actions = document.createElement('div');
     actions.className = 'recommendation-actions';
 
-    const copyBtn = document.createElement('button');
-    copyBtn.type = 'button';
-    copyBtn.className = 'btn btn-primary';
-    copyBtn.textContent = 'Copiar';
-    copyBtn.addEventListener('click', () => copyMessage(message.mensaje || ''));
+    const favoriteBtn = document.createElement('button');
+    favoriteBtn.type = 'button';
+    favoriteBtn.className = 'btn btn-ghost';
+    favoriteBtn.textContent = isFavoriteMessage(message) ? 'Favorito' : 'Marcar favorito';
+    favoriteBtn.addEventListener('click', () => toggleFavoriteMessage(message));
+
+    const draftBtn = document.createElement('button');
+    draftBtn.type = 'button';
+    draftBtn.className = 'btn btn-ghost';
+    draftBtn.textContent = 'Editar antes de copiar';
+    draftBtn.addEventListener('click', () => openDraftModal(message));
+
+    const similarBtn = document.createElement('button');
+    similarBtn.type = 'button';
+    similarBtn.className = 'btn btn-ghost';
+    similarBtn.textContent = 'Crear mensaje similar';
+    similarBtn.addEventListener('click', () => createMessageSimilar(message));
 
     const locateBtn = document.createElement('button');
     locateBtn.type = 'button';
@@ -790,12 +1180,23 @@ function renderAssistantResults(payload) {
     locateBtn.textContent = 'Ver en tabla';
     locateBtn.addEventListener('click', () => focusMessageInTable(message));
 
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'btn btn-primary';
+    copyBtn.textContent = 'Copiar';
+    copyBtn.addEventListener('click', () => copyMessage(message.mensaje || '', message));
+
+    actions.appendChild(favoriteBtn);
+    actions.appendChild(draftBtn);
     actions.appendChild(locateBtn);
+    actions.appendChild(similarBtn);
     actions.appendChild(copyBtn);
 
     card.appendChild(top);
+    card.appendChild(badges);
     card.appendChild(reason);
     card.appendChild(body);
+    if (placeholderNote) card.appendChild(placeholderNote);
     card.appendChild(actions);
     assistantResults.appendChild(card);
   }
@@ -804,13 +1205,20 @@ function renderAssistantResults(payload) {
 function askAssistant() {
   const query = (assistantInput ? assistantInput.value : '').trim();
   if (!query) {
-    renderAssistantEmpty('Escribe el caso primero. Sí, tristemente todavía no leo mentes, solo texto.');
+    renderAssistantEmpty('Escribe el caso primero. Todavia necesito texto para recomendar bien.');
+    return;
+  }
+  if (query === '__favorites__') {
+    renderSavedAssistantList('Favoritos', getFavoriteMessages());
+    return;
+  }
+  if (query === '__recent__') {
+    renderSavedAssistantList('Recientes', getRecentMessages());
     return;
   }
   const payload = assistantSearch(query);
   renderAssistantResults(payload);
 }
-
 function openDraftModal(message) {
   modalMode = 'draft';
   modalTitle.textContent = 'Editar antes de copiar';
@@ -837,10 +1245,11 @@ function focusMessageInTable(message) {
 /** =========================
  *  ACTIONS
  *  ========================= */
-async function copyMessage(text) {
-  const value = String(text || '');
+async function copyMessage(text, message = null) {
+  const value = formatForWhatsApp(text);
   try {
     await navigator.clipboard.writeText(value);
+    if (message) addRecentMessage(message);
     toast('Mensaje copiado ✅', 'ok');
   } catch (_) {
     try {
@@ -853,6 +1262,7 @@ async function copyMessage(text) {
       ta.select();
       document.execCommand('copy');
       ta.remove();
+      if (message) addRecentMessage(message);
       toast('Mensaje copiado ✅', 'ok');
     } catch (e2) {
       alert('No pude copiar el mensaje. Tu navegador eligió drama.');
@@ -902,6 +1312,7 @@ async function load() {
       .sort(sortMessages);
 
     populateCategoryFilter();
+    renderQuickChips();
     render();
     if (assistantResults && assistantResults.children.length) askAssistant();
 
@@ -1049,7 +1460,7 @@ function wireEvents() {
   if (btnCloseAssistant) btnCloseAssistant.addEventListener('click', () => setAssistantOpen(false));
   if (assistantInput) {
     assistantInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         askAssistant();
       }
@@ -1086,7 +1497,9 @@ function wireEvents() {
  *  INIT
  *  ========================= */
 (function init(){
+  initAssistantAvatars();
   wireEvents();
+  renderQuickChips();
   setEditMode(false);
   lockUI();
   load();

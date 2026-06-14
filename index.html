@@ -40,13 +40,19 @@
 
   <main id="main" class="page" role="main">
     <button id="btnAssistantWidget" class="assistant-fab" type="button" aria-controls="assistantPanel" aria-expanded="false">
-      <span aria-hidden="true">?</span>
+      <span class="assistant-fab-avatar" aria-hidden="true">
+        <img src="./musiasistente.png" alt="" class="assistant-avatar-img" loading="lazy">
+        <span class="assistant-avatar-fallback">🤖</span>
+      </span>
       <span>Preguntar</span>
     </button>
 
     <section id="assistantPanel" class="assistant-card" aria-labelledby="assistantTitle" hidden>
       <div class="assistant-head">
-        <div class="assistant-avatar" aria-hidden="true">🤖</div>
+        <div class="assistant-avatar" aria-hidden="true">
+          <img src="./musiasistente.png" alt="" class="assistant-avatar-img" loading="lazy">
+          <span class="assistant-avatar-fallback">🤖</span>
+        </div>
         <div>
           <p class="eyebrow">Asistente local</p>
           <h1 id="assistantTitle">MusiAsistente de respuestas</h1>
@@ -65,6 +71,9 @@
           <button id="btnClearAssistant" class="btn btn-ghost" type="button">Limpiar</button>
         </div>
       </div>
+
+      <div class="assistant-quick-title">Accesos rápidos</div>
+      <div id="assistantQuickChips" class="assistant-examples" aria-label="Accesos rápidos"></div>
 
       <div class="assistant-examples" aria-label="Ejemplos de búsqueda">
         <button class="chip" type="button" data-example="Qué le digo a un profe que llegó tarde">Profe llegó tarde</button>
@@ -163,6 +172,7 @@
     </form>
   </div>
 
-  <script src="./app.js?v=20260527-categorias-fix"></script>
+  <script src="./project-knowledge.js"></script>
+  <script src="./app.js?v=20260613-musiaisistente-pro"></script>
 </body>
 </html>
