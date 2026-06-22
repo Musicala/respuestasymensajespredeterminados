@@ -1,0 +1,612 @@
+{
+  "schemaVersion": "1.0",
+  "app": {
+    "name": "Guión de ventas Musicala",
+    "version": "v0.2",
+    "updatedAt": "2026-02-20"
+  },
+  "phases": {
+    "exploracion": {
+      "name": "Exploración",
+      "hint": "Inicia con preguntas cortas y claras."
+    },
+    "conexion": {
+      "name": "Conexión",
+      "hint": "Aterriza objetivo, edad y contexto."
+    },
+    "propuesta": {
+      "name": "Propuesta",
+      "hint": "Ofrece la opción más simple y concreta."
+    },
+    "cierre": {
+      "name": "Cierre",
+      "hint": "Siguiente paso concreto: agendar / inscribir."
+    },
+    "seguimiento": {
+      "name": "Seguimiento",
+      "hint": "Deja claridad y fecha del próximo contacto."
+    }
+  },
+  "channels": {
+    "llamada": {
+      "label": "Llamada",
+      "tone": "cercano",
+      "opener": "Hola 😊 Soy ___ de Musicala."
+    },
+    "whatsapp": {
+      "label": "WhatsApp",
+      "tone": "corto",
+      "opener": "Hola 😊 Soy ___ de Musicala."
+    },
+    "redes": {
+      "label": "Redes / Formulario",
+      "tone": "ágil",
+      "opener": "Hola 😊 Soy ___ de Musicala."
+    }
+  },
+  "faqBank": [
+    {
+      "tag": "sede",
+      "q": "¿Dónde quedan? (sede)",
+      "a": "“Estamos en Bogotá. Te comparto la ubicación exacta por WhatsApp y te cuento opciones de parqueo.”"
+    },
+    {
+      "tag": "como-funciona",
+      "q": "¿Cómo funcionan las clases?",
+      "a": "“Te recomendamos empezar con un plan mensual. Depende de edad, objetivo y disponibilidad.”"
+    },
+    {
+      "tag": "precio",
+      "q": "¿Por qué vale lo que vale? (precio)",
+      "a": "“Incluye acompañamiento real, metodología artística, docentes seleccionados y seguimiento. No es solo ‘dar clase’, es formar.”"
+    },
+    {
+      "tag": "horarios",
+      "q": "¿Tienen horarios flexibles?",
+      "a": "“Buscamos el horario que mejor se ajuste. Te propongo 2 opciones según tu disponibilidad.”"
+    },
+    {
+      "tag": "virtual",
+      "q": "¿Tienen clases virtuales?",
+      "a": "“Sí. Virtual funciona muy bien si hay constancia y objetivos claros. Te explico cómo sería el proceso.”"
+    },
+    {
+      "tag": "edad",
+      "q": "¿Desde qué edad reciben?",
+      "a": "“Tenemos opciones por edades. Cuéntame la edad exacta y el objetivo para recomendarte lo ideal.”"
+    }
+  ],
+  "tree": {
+    "inicio": {
+      "id": "inicio",
+      "phase": "exploracion",
+      "prompt": "Hola, gracias por comunicarte con Musicala 😊 ¿Cómo te puedo ayudar hoy?",
+      "say": {
+        "base": "“Hola 😊 Soy ___ de Musicala. Para orientarte mejor, te hago 2 pregunticas rápidas.”"
+      },
+      "tip": "Sonríe al hablar. Sí, se nota por teléfono.",
+      "tags": [
+        "como-funciona"
+      ],
+      "kv": {
+        "status": "Explorando",
+        "interest": "—",
+        "service": "—"
+      },
+      "options": [
+        {
+          "label": "ℹ️ Quiere información general",
+          "next": "descubrimiento"
+        },
+        {
+          "label": "💰 Pregunta por precios",
+          "next": "objecion_precio",
+          "setKv": {
+            "objection": "Precio"
+          }
+        },
+        {
+          "label": "🗓️ Pregunta por horarios",
+          "next": "horarios",
+          "setKv": {
+            "interest": "Horarios"
+          }
+        },
+        {
+          "label": "✅ Quiere inscribirse / agendar",
+          "next": "cierre_directo",
+          "setKv": {
+            "status": "Señal positiva"
+          },
+          "primary": true
+        }
+      ]
+    },
+    "descubrimiento": {
+      "id": "descubrimiento",
+      "phase": "conexion",
+      "prompt": "Perfecto. ¿Para quién es el curso?",
+      "say": {
+        "base": "“Súper. ¿Es para ti o para alguien más? ¿Qué edad tiene y qué le gustaría aprender?”"
+      },
+      "tip": "No ofrezcas precio aún: primero objetivo + edad + disponibilidad.",
+      "tags": [
+        "edad",
+        "como-funciona"
+      ],
+      "kv": {
+        "status": "Conectando",
+        "interest": "Definir perfil",
+        "service": "—"
+      },
+      "options": [
+        {
+          "label": "👶 Niño/a (3–6)",
+          "next": "objetivo",
+          "setKv": {
+            "interest": "Niño/a 3–6"
+          }
+        },
+        {
+          "label": "🧒 Niño/a (7–11)",
+          "next": "objetivo",
+          "setKv": {
+            "interest": "Niño/a 7–11"
+          }
+        },
+        {
+          "label": "🧑‍🎓 Joven",
+          "next": "objetivo",
+          "setKv": {
+            "interest": "Joven"
+          }
+        },
+        {
+          "label": "🧑 Adulto",
+          "next": "objetivo",
+          "setKv": {
+            "interest": "Adulto"
+          }
+        },
+        {
+          "label": "🏢 Empresa / Institución",
+          "next": "empresa",
+          "setKv": {
+            "interest": "Empresa"
+          }
+        }
+      ]
+    },
+    "objetivo": {
+      "id": "objetivo",
+      "phase": "conexion",
+      "prompt": "¿Qué quiere lograr? (objetivo principal)",
+      "say": {
+        "base": "“¿Qué te gustaría que pase con estas clases? Por ejemplo: hobby, técnica, confianza, preparación, bienestar…”"
+      },
+      "tip": "Si te dan 3 cosas, resume en 1 frase y confirma.",
+      "tags": [
+        "como-funciona"
+      ],
+      "kv": {
+        "status": "Entendiendo",
+        "service": "—"
+      },
+      "options": [
+        {
+          "label": "🎹 Aprender desde cero (hobby)",
+          "next": "propuesta_base",
+          "setKv": {
+            "service": "Iniciación (recomendado)"
+          }
+        },
+        {
+          "label": "🚀 Mejorar técnica / avanzar",
+          "next": "propuesta_avance",
+          "setKv": {
+            "service": "Nivelación / avance"
+          }
+        },
+        {
+          "label": "🎭 Creatividad / expresión",
+          "next": "propuesta_creativa",
+          "setKv": {
+            "service": "Ruta creativa"
+          }
+        },
+        {
+          "label": "🏆 Preparación (evento/examen)",
+          "next": "propuesta_objetivo",
+          "setKv": {
+            "service": "Preparación"
+          }
+        }
+      ]
+    },
+    "horarios": {
+      "id": "horarios",
+      "phase": "conexion",
+      "prompt": "Listo. ¿Qué disponibilidad tienen? (días y franjas)",
+      "say": {
+        "base": "“Dime dos opciones de días y horas que te sirvan, y te propongo el mejor match.”"
+      },
+      "tip": "Pide 2 opciones. Si piden “lo que haya”, ofrece 2 alternativas concretas.",
+      "tags": [
+        "horarios"
+      ],
+      "kv": {
+        "status": "Explorando horarios",
+        "interest": "Horarios",
+        "service": "—"
+      },
+      "options": [
+        {
+          "label": "📅 Tiene días/horas claras",
+          "next": "propuesta_base"
+        },
+        {
+          "label": "🤷 No sabe, quiere recomendaciones",
+          "next": "propuesta_base"
+        },
+        {
+          "label": "🧱 No le sirve nada / muy difícil",
+          "next": "seguimiento",
+          "setKv": {
+            "status": "Pendiente"
+          }
+        }
+      ]
+    },
+    "objecion_precio": {
+      "id": "objecion_precio",
+      "phase": "propuesta",
+      "prompt": "El cliente dice: “Está caro” / “¿Por qué cuesta eso?”",
+      "say": {
+        "base": "“Te entiendo. Para ayudarte bien: ¿es que se sale del presupuesto o estás comparando con otra opción?”"
+      },
+      "tip": "No te defiendas. Pregunta primero. Luego aterriza valor + opción simple.",
+      "tags": [
+        "precio"
+      ],
+      "kv": {
+        "status": "Objeción",
+        "interest": "Precio",
+        "service": "—"
+      },
+      "options": [
+        {
+          "label": "💸 Se sale del presupuesto",
+          "next": "propuesta_base",
+          "setKv": {
+            "status": "Buscando ajuste"
+          }
+        },
+        {
+          "label": "⚖️ Está comparando con otra academia",
+          "next": "valor_diferencial",
+          "setKv": {
+            "status": "Comparando"
+          }
+        },
+        {
+          "label": "🧱 Solo quiere “lo más barato”",
+          "next": "seguimiento",
+          "setKv": {
+            "status": "Baja intención"
+          }
+        }
+      ]
+    },
+    "valor_diferencial": {
+      "id": "valor_diferencial",
+      "phase": "propuesta",
+      "prompt": "Aterrizar valor diferencial sin sonar intenso.",
+      "say": {
+        "base": "“Total. En Musicala lo clave es: acompañamiento real, metodología y seguimiento. Te propongo empezar con una opción simple y mirar cómo se siente.”"
+      },
+      "tip": "Cierra con invitación concreta: clase de prueba / plan mensual / agendar.",
+      "tags": [
+        "precio",
+        "como-funciona"
+      ],
+      "kv": {
+        "status": "Proponiendo",
+        "service": "Opción simple"
+      },
+      "options": [
+        {
+          "label": "✅ Le hace sentido",
+          "next": "cierre_directo",
+          "primary": true
+        },
+        {
+          "label": "🤔 Aún duda",
+          "next": "seguimiento"
+        }
+      ]
+    },
+    "propuesta_base": {
+      "id": "propuesta_base",
+      "phase": "propuesta",
+      "prompt": "Dar una propuesta simple y clara.",
+      "say": {
+        "base": "“Con lo que me dices, lo más fácil es empezar con un plan mensual. Te confirmo 2 horarios y te dejo todo listo.”",
+        "whatsapp": "“Con lo que me dices, te recomiendo plan mensual 😊 Te paso 2 horarios y lo dejamos listo.”",
+        "redes": "“Te recomiendo empezar con plan mensual 😊 Te propongo 2 horarios y seguimos.”"
+      },
+      "tip": "Una sola propuesta principal + 1 alternativa. No 5 opciones.",
+      "tags": [
+        "como-funciona",
+        "horarios"
+      ],
+      "kv": {
+        "status": "Propuesta",
+        "service": "Plan mensual (base)"
+      },
+      "options": [
+        {
+          "label": "✅ Quiere agendar/inscribirse",
+          "next": "cierre_directo",
+          "setKv": {
+            "status": "Señal positiva"
+          },
+          "primary": true
+        },
+        {
+          "label": "⏳ Quiere pensarlo",
+          "next": "seguimiento",
+          "setKv": {
+            "status": "Pendiente"
+          }
+        },
+        {
+          "label": "❌ No le interesa",
+          "next": "cierre_no_interesa",
+          "setKv": {
+            "status": "No interesado"
+          }
+        }
+      ]
+    },
+    "propuesta_avance": {
+      "id": "propuesta_avance",
+      "phase": "propuesta",
+      "prompt": "Propuesta para alguien que ya sabe algo.",
+      "say": {
+        "base": "“Perfecto. Arrancamos con una breve nivelación y definimos una ruta para avanzar rápido.”"
+      },
+      "tip": "Pregunta 1 cosa técnica: “¿qué sabe tocar/hacer ya?”",
+      "tags": [
+        "como-funciona"
+      ],
+      "kv": {
+        "status": "Propuesta",
+        "service": "Nivelación / avance"
+      },
+      "options": [
+        {
+          "label": "✅ Quiere agendar",
+          "next": "cierre_directo",
+          "primary": true
+        },
+        {
+          "label": "⏳ Quiere pensarlo",
+          "next": "seguimiento"
+        }
+      ]
+    },
+    "propuesta_creativa": {
+      "id": "propuesta_creativa",
+      "phase": "propuesta",
+      "prompt": "Propuesta enfocada en creatividad/expresión.",
+      "say": {
+        "base": "“Me encanta ese enfoque. Te propongo una ruta creativa, con actividades para explorar y avanzar con confianza.”"
+      },
+      "tip": "Valida emoción: “suena lindo, lo podemos trabajar.”",
+      "tags": [
+        "como-funciona"
+      ],
+      "kv": {
+        "status": "Propuesta",
+        "service": "Ruta creativa"
+      },
+      "options": [
+        {
+          "label": "✅ Quiere agendar",
+          "next": "cierre_directo",
+          "primary": true
+        },
+        {
+          "label": "⏳ Quiere pensarlo",
+          "next": "seguimiento"
+        }
+      ]
+    },
+    "propuesta_objetivo": {
+      "id": "propuesta_objetivo",
+      "phase": "propuesta",
+      "prompt": "Propuesta con meta (evento/examen).",
+      "say": {
+        "base": "“Si hay una fecha/meta, armamos un plan con pasos claros. ¿Para cuándo lo necesitas?”"
+      },
+      "tip": "Fecha + disponibilidad + nivel actual = plan.",
+      "tags": [
+        "como-funciona"
+      ],
+      "kv": {
+        "status": "Propuesta",
+        "service": "Preparación"
+      },
+      "options": [
+        {
+          "label": "✅ Quiere agendar",
+          "next": "cierre_directo",
+          "primary": true
+        },
+        {
+          "label": "⏳ Quiere pensarlo",
+          "next": "seguimiento"
+        }
+      ]
+    },
+    "empresa": {
+      "id": "empresa",
+      "phase": "conexion",
+      "prompt": "Interés empresarial: entender necesidad.",
+      "say": {
+        "base": "“Súper. ¿Qué buscan: bienestar, integración, formación artística, evento puntual o un programa?”"
+      },
+      "tip": "Pregunta por: número de personas + objetivo + fecha/periodicidad.",
+      "tags": [
+        "como-funciona"
+      ],
+      "kv": {
+        "status": "Empresa",
+        "service": "Propuesta corporativa"
+      },
+      "options": [
+        {
+          "label": "📅 Evento puntual",
+          "next": "seguimiento",
+          "setKv": {
+            "status": "Cotización"
+          }
+        },
+        {
+          "label": "🔁 Programa recurrente",
+          "next": "seguimiento",
+          "setKv": {
+            "status": "Cotización"
+          }
+        }
+      ]
+    },
+    "cierre_directo": {
+      "id": "cierre_directo",
+      "phase": "cierre",
+      "prompt": "Cierre: siguiente paso concreto.",
+      "say": {
+        "base": "“Listo 😊 Para dejarlo agendado: ¿me confirmas nombre completo, número y el horario que prefieres?”",
+        "whatsapp": "“Listo 😊 Para agendar: nombre completo + número + horario que prefieres.”",
+        "redes": "“Listo 😊 Para agendar: nombre + número + horario que prefieres.”"
+      },
+      "tip": "No preguntes “¿quieres?”: guía. “Para agendar necesito…”",
+      "tags": [
+        "horarios"
+      ],
+      "kv": {
+        "status": "Cerrando",
+        "service": "Agendamiento"
+      },
+      "options": [
+        {
+          "label": "✅ Confirmó datos (cierre logrado)",
+          "next": "cierre_logrado",
+          "setKv": {
+            "status": "Cierre logrado"
+          },
+          "primary": true
+        },
+        {
+          "label": "⏳ Pide seguimiento",
+          "next": "seguimiento",
+          "setKv": {
+            "status": "Pendiente"
+          }
+        },
+        {
+          "label": "🧱 Se frenó por precio",
+          "next": "objecion_precio",
+          "setKv": {
+            "status": "Objeción"
+          }
+        }
+      ]
+    },
+    "cierre_logrado": {
+      "id": "cierre_logrado",
+      "phase": "cierre",
+      "prompt": "Cierre logrado ✅",
+      "say": {
+        "base": "“Perfecto 😊 Te lo dejo separado/confirmado y te envío el paso a paso por WhatsApp. Gracias.”"
+      },
+      "tip": "Deja claridad: qué sigue + cuándo + por dónde.",
+      "tags": [],
+      "kv": {
+        "status": "Cierre logrado",
+        "interest": "—"
+      },
+      "options": [
+        {
+          "label": "🔄 Volver al inicio (nuevo cliente)",
+          "next": "inicio"
+        }
+      ]
+    },
+    "seguimiento": {
+      "id": "seguimiento",
+      "phase": "seguimiento",
+      "prompt": "Seguimiento: acordar próxima acción.",
+      "say": {
+        "base": "“Súper. Para no dejarlo al aire: ¿te parece si te escribo hoy en la tarde con 2 opciones y quedamos listos?”",
+        "whatsapp": "“Súper 😊 Te escribo hoy con 2 opciones y lo dejamos listo.”",
+        "redes": "“Te escribo hoy con 2 opciones y seguimos 😊”"
+      },
+      "tip": "Siempre propone fecha/hora concreta.",
+      "tags": [],
+      "kv": {
+        "status": "Seguimiento",
+        "service": "—"
+      },
+      "options": [
+        {
+          "label": "✅ Acepta seguimiento",
+          "next": "seguimiento_ok",
+          "primary": true
+        },
+        {
+          "label": "❌ No responde / no quiere",
+          "next": "cierre_no_interesa"
+        }
+      ]
+    },
+    "seguimiento_ok": {
+      "id": "seguimiento_ok",
+      "phase": "seguimiento",
+      "prompt": "Seguimiento acordado ✅",
+      "say": {
+        "base": "“Listo 😊 Quedamos así: hoy te mando las opciones y tú me confirmas la mejor. Gracias.”"
+      },
+      "tip": "Anota: fecha/hora del seguimiento.",
+      "tags": [],
+      "kv": {
+        "status": "Seguimiento acordado"
+      },
+      "options": [
+        {
+          "label": "🔄 Volver al inicio (nuevo cliente)",
+          "next": "inicio"
+        }
+      ]
+    },
+    "cierre_no_interesa": {
+      "id": "cierre_no_interesa",
+      "phase": "seguimiento",
+      "prompt": "Cierre amable (no interesado).",
+      "say": {
+        "base": "“Entiendo 😊 Gracias por escribir/llamar. Si más adelante lo retoman, aquí estamos.”"
+      },
+      "tip": "Nunca pelees. Puerta abierta.",
+      "tags": [],
+      "kv": {
+        "status": "No interesado"
+      },
+      "options": [
+        {
+          "label": "🔄 Volver al inicio (nuevo cliente)",
+          "next": "inicio"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,10 @@
+# Configuración local de Claude Code
+.claude/
+
+# Archivos temporales / parches
+*.patch
+musiasistente-update.patch
+
+# Sistema
+Thumbs.db
+.DS_Store

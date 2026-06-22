@@ -1,4 +1,4 @@
-/* ============================================================================
+﻿/* ============================================================================
   app.js — Mensajes Predeterminados · Musicala — PRO + MusiAsistente local
   -----------------------------------------------------------------------------
   - Carga mensajes desde Apps Script.
@@ -13,7 +13,7 @@
 /** =========================
  *  CONFIG
  *  ========================= */
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzRLmxDvzjCRBYxU4cMsTa1Q-kgQEK5neQ4I3-R1QR526gfTypMVHaddGX4mKkdoY9DIw/exec';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyOTN0ltVA4dvyoFPKySyRPJ1iOd1V1LMrf0QELN6L8GQfjcrAN2ZsntTSowbKv9m7y5A/exec';
 const API_KEY = 'MUSICALA_MSGS_2026';
 const BACKUP_MESSAGES_URL = './messages-backup.json';
 const HTTP_TIMEOUT_MS = 15000;
@@ -31,6 +31,9 @@ let editMode = false;
 let isLoading = false;
 let isSaving = false;
 let modalMode = 'create';
+// true cuando los datos vienen de la hoja oficial (editable).
+// false cuando se muestra el respaldo local (solo lectura).
+let editableSource = false;
 
 /** =========================
  *  DOM
@@ -44,6 +47,7 @@ const tbody            = $('#messageTableBody');
 const statusText       = $('#statusText');
 const btnReload        = $('#btnReload');
 const btnNew           = $('#btnNew');
+const btnImport        = $('#btnImport');
 const btnToggleEdit    = $('#btnToggleEdit');
 const editStateBadge   = $('#editState');
 const toastEl          = $('#toast');
@@ -428,6 +432,7 @@ function scoreMatch(haystack, tokens) {
 
 function lockUI() {
   setDisabled(btnReload, isLoading || isSaving);
+  setDisabled(btnImport, isLoading || isSaving);
   setDisabled(btnNew, isLoading || isSaving);
   setDisabled(btnToggleEdit, isLoading || isSaving);
   setDisabled(btnAskAssistant, isLoading || isSaving);
@@ -567,10 +572,10 @@ function closeModal() {
  *  ========================= */
 function setEditMode(on) {
   editMode = !!on;
-  if (editStateBadge) {
-    editStateBadge.textContent = editMode ? 'ON' : 'OFF';
-    editStateBadge.style.background = editMode ? 'rgba(22,163,74,.15)' : 'rgba(0,0,0,.06)';
-    editStateBadge.style.color = editMode ? '#166534' : '#111827';
+  if (editStateBadge) editStateBadge.textContent = editMode ? 'ON' : 'OFF';
+  if (btnToggleEdit) {
+    btnToggleEdit.classList.toggle('is-on', editMode);
+    btnToggleEdit.setAttribute('aria-pressed', String(editMode));
   }
   render();
 }
@@ -663,6 +668,8 @@ function render() {
 
   for (const m of filtered) {
     const tr = document.createElement('tr');
+    const disabled = m.activo === false;
+    if (disabled) tr.classList.add('row-disabled');
 
     const tdCat = document.createElement('td');
     tdCat.textContent = m.categoria || '';
@@ -670,6 +677,12 @@ function render() {
 
     const tdAtajo = document.createElement('td');
     tdAtajo.textContent = m.atajo || '';
+    if (disabled) {
+      const badge = document.createElement('span');
+      badge.className = 'badge-off';
+      badge.textContent = 'Inhabilitado';
+      tdAtajo.appendChild(badge);
+    }
     tr.appendChild(tdAtajo);
 
     const tdMsg = document.createElement('td');
@@ -704,6 +717,15 @@ function render() {
         openModal('edit', m);
       });
 
+      const btnToggle = document.createElement('button');
+      btnToggle.type = 'button';
+      btnToggle.className = 'btn btn-ghost';
+      btnToggle.style.padding = '7px 10px';
+      btnToggle.style.borderRadius = '12px';
+      btnToggle.style.marginLeft = '8px';
+      btnToggle.textContent = disabled ? 'Habilitar' : 'Inhabilitar';
+      btnToggle.addEventListener('click', () => setMessageActive(m, disabled));
+
       const btnArch = document.createElement('button');
       btnArch.type = 'button';
       btnArch.className = 'btn btn-danger';
@@ -715,10 +737,12 @@ function render() {
 
       if (isLoading || isSaving) {
         btnEdit.disabled = true;
+        btnToggle.disabled = true;
         btnArch.disabled = true;
       }
 
       tdAct.appendChild(btnEdit);
+      tdAct.appendChild(btnToggle);
       tdAct.appendChild(btnArch);
     } else {
       const muted = document.createElement('span');
@@ -929,6 +953,7 @@ function assistantSearch(query) {
   }
 
   const scored = allMessages
+    .filter(message => message.activo !== false)
     .map(message => {
       const scoring = scoreAssistantMessage(message, baseTokens, intents, context, knowledge, query);
       return { message, score: scoring.score, reasons: scoring.reasons };
@@ -977,7 +1002,7 @@ function renderAssistantEmpty(text) {
 
 function getFavoriteMessages() {
   const keys = new Set(getFavoriteKeys());
-  return allMessages.filter(m => keys.has(getMessageStorageKey(m)));
+  return allMessages.filter(m => m.activo !== false && keys.has(getMessageStorageKey(m)));
 }
 
 function getRecentMessages() {
@@ -1278,29 +1303,30 @@ async function load() {
   setAssistantMeta('Cargando base de conocimiento…');
 
   try {
-    let loadedFromBackup = false;
-    let mergedWithBackup = false;
-    let remoteCount = 0;
-    let backupCount = 0;
-    allMessages = await apiGetList();
-    remoteCount = allMessages.length;
+    let messages = [];
+    let fromBackup = false;
 
-    if (!allMessages.length) {
-      allMessages = await loadBackupMessages();
-      loadedFromBackup = true;
-      backupCount = allMessages.length;
-    } else {
-      const backupMessages = await loadBackupMessages().catch(() => []);
-      backupCount = backupMessages.length;
+    // 1) La hoja oficial es la única fuente editable.
+    try {
+      messages = await apiGetList();
+      editableSource = true;
+    } catch (err) {
+      console.error('No se pudo leer la hoja oficial:', err);
+      editableSource = false;
+    }
 
-      if (backupMessages.length > allMessages.length) {
-        mergedWithBackup = true;
-        allMessages = backupMessages;
+    // 2) Si la hoja está vacía o no respondió, usamos el respaldo SOLO para lectura.
+    if (!messages.length) {
+      const backup = await loadBackupMessages().catch(() => []);
+      if (backup.length) {
+        messages = backup;
+        fromBackup = true;
+        editableSource = false;
       }
     }
 
-    allMessages = allMessages
-      .filter(m => m && (m.activo !== false))
+    allMessages = messages
+      .filter(m => m)
       .map(m => ({
         id: String(m.id || '').trim(),
         categoria: String(m.categoria || '').trim(),
@@ -1316,15 +1342,12 @@ async function load() {
     render();
     if (assistantResults && assistantResults.children.length) askAssistant();
 
-    if (loadedFromBackup) {
-      setStatus(`Cargado: ${allMessages.length} mensajes desde la hoja oficial Mensajes.`);
-      setAssistantMeta(`Base oficial lista: ${allMessages.length} mensajes disponibles para recomendar.`);
-    } else if (mergedWithBackup) {
-      setStatus(`Cargado: ${allMessages.length} mensajes desde la hoja oficial Mensajes.`);
-      setAssistantMeta(`Base oficial lista: ${allMessages.length} mensajes disponibles para recomendar.`);
+    if (fromBackup) {
+      setStatus(`Mostrando ${allMessages.length} mensajes desde el respaldo local (solo lectura). Usa "Importar a la hoja" para poder editar.`);
+      setAssistantMeta(`Respaldo local: ${allMessages.length} mensajes (solo lectura).`);
     } else {
-      setStatus(`Cargado: ${allMessages.length} mensajes.`);
-      setAssistantMeta(`Base local lista: ${allMessages.length} mensajes disponibles para recomendar.`);
+      setStatus(`Cargado: ${allMessages.length} mensajes desde la hoja oficial Mensajes.`);
+      setAssistantMeta(`Base oficial lista: ${allMessages.length} mensajes disponibles para recomendar.`);
     }
   } catch (err) {
     console.error(err);
@@ -1333,6 +1356,52 @@ async function load() {
     toast(String(err.message || err), 'bad');
   } finally {
     isLoading = false;
+    lockUI();
+  }
+}
+
+/**
+ * Bloquea cualquier escritura cuando lo que se muestra es el respaldo local.
+ * Evita el error "No se encontró el mensaje con ese ID" por IDs que no están en la hoja.
+ */
+function requireEditableSource() {
+  if (editableSource) return true;
+  toast('Estás viendo el respaldo local (solo lectura). Usa "Importar a la hoja" para poder editar.', 'warn');
+  return false;
+}
+
+async function importBackupToSheet() {
+  if (isSaving || isLoading) return;
+
+  const backup = await loadBackupMessages().catch(() => []);
+  if (!backup.length) {
+    toast('No hay respaldo local para importar.', 'warn');
+    return;
+  }
+
+  const ok = confirm(
+    `¿Importar ${backup.length} mensajes del respaldo a la hoja oficial?\n\n` +
+    'No se crean duplicados: se omiten los que ya existen (por ID o por categoría + atajo).'
+  );
+  if (!ok) return;
+
+  isSaving = true;
+  lockUI();
+  setStatus('Importando a la hoja oficial…');
+
+  try {
+    const res = await apiPost('import', { messages: backup });
+    const imported = (res && res.imported) || 0;
+    const skipped = (res && res.skipped) || 0;
+    toast(`Importados: ${imported} · Omitidos: ${skipped}`, 'ok');
+    isSaving = false;
+    await load();
+  } catch (err) {
+    console.error(err);
+    setStatus('Error importando.');
+    toast(String(err.message || err), 'bad');
+  } finally {
+    isSaving = false;
     lockUI();
   }
 }
@@ -1359,6 +1428,8 @@ async function saveFromModal() {
     toast('Completa categoría, atajo y mensaje.', 'warn');
     return;
   }
+
+  if (!requireEditableSource()) return;
 
   if (modalMode === 'edit' && !id) {
     toast('No se puede editar: este mensaje no tiene ID. Revisa la fuente de datos.', 'bad');
@@ -1399,7 +1470,40 @@ async function saveFromModal() {
   }
 }
 
+async function setMessageActive(m, active) {
+  if (!requireEditableSource()) return;
+  if (!m || !m.id) {
+    toast('No encuentro el ID para cambiar el estado. Revisa la fuente de datos.', 'bad');
+    return;
+  }
+  if (isSaving) return;
+
+  isSaving = true;
+  lockUI();
+  setStatus(active ? 'Habilitando…' : 'Inhabilitando…');
+
+  // Reflejo optimista para que se sienta inmediato.
+  m.activo = active;
+  render();
+
+  try {
+    await apiPost('setActive', { id: m.id, activo: active });
+    toast(active ? 'Mensaje habilitado ✅' : 'Mensaje inhabilitado 🚫', 'ok');
+    await load();
+  } catch (err) {
+    console.error(err);
+    m.activo = !active; // revertir
+    render();
+    setStatus('Error cambiando el estado.');
+    toast(String(err.message || err), 'bad');
+  } finally {
+    isSaving = false;
+    lockUI();
+  }
+}
+
 async function archiveMessage(m) {
+  if (!requireEditableSource()) return;
   if (!m || !m.id) {
     toast('No encuentro el ID para archivar. Revisa la fuente de datos.', 'bad');
     return;
@@ -1444,6 +1548,8 @@ function wireEvents() {
 
   if (categorySelect) categorySelect.addEventListener('change', () => render());
   if (btnReload) btnReload.addEventListener('click', () => load());
+
+  if (btnImport) btnImport.addEventListener('click', () => importBackupToSheet());
 
   if (btnNew) {
     btnNew.addEventListener('click', () => {

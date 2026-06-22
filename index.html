@@ -10,11 +10,25 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;800&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./styles.css?v=20260622" />
+  <link rel="stylesheet" href="./guion.css" />
 </head>
 
 <body>
   <a class="skip" href="#main">Saltar al contenido</a>
+
+  <!-- Conmutador de vistas -->
+  <nav id="viewSwitcher" class="view-switcher" role="tablist" aria-label="Cambiar de herramienta">
+    <button id="tabMensajes" class="view-tab is-active" type="button" role="tab" aria-selected="true" data-view="mensajes">
+      💬 Mensajes
+    </button>
+    <button id="tabGuion" class="view-tab" type="button" role="tab" aria-selected="false" data-view="guion">
+      🎯 Guión de ventas
+    </button>
+  </nav>
+
+  <!-- ===================== VISTA: MENSAJES ===================== -->
+  <div id="viewMensajes" class="view" role="tabpanel" aria-labelledby="tabMensajes">
 
   <header class="topbar" role="banner">
     <div class="brand">
@@ -26,12 +40,14 @@
     </div>
 
     <div class="topbar-actions">
-      <button id="btnToggleEdit" class="btn btn-ghost" type="button" title="Activar modo edición">
-        Modo edición: <span id="editState" class="badge">OFF</span>
+      <button id="btnToggleEdit" class="edit-toggle" type="button" title="Activar o desactivar el modo edición" aria-pressed="false">
+        <span class="edit-toggle-text">Modo edición</span>
+        <span class="switch" aria-hidden="true"><span class="switch-dot"></span></span>
+        <span id="editState" class="sr-only">OFF</span>
       </button>
 
       <button id="btnNew" class="btn btn-primary" type="button">
-        + Nuevo
+        <span aria-hidden="true">＋</span> Nuevo mensaje
       </button>
     </div>
   </header>
@@ -111,7 +127,12 @@
 
       <div class="statusline">
         <span id="statusText" class="muted">Listo.</span>
-        <button id="btnReload" class="btn btn-ghost" type="button">Recargar</button>
+        <div class="statusline-actions">
+          <button id="btnImport" class="btn btn-soft" type="button" title="Subir los mensajes del respaldo local a la hoja oficial (sin duplicar)">
+            ⬆ Importar respaldo
+          </button>
+          <button id="btnReload" class="btn btn-ghost" type="button">↻ Recargar</button>
+        </div>
       </div>
     </section>
 
@@ -172,7 +193,213 @@
     </form>
   </div>
 
+  </div><!-- /#viewMensajes -->
+
+  <!-- ===================== VISTA: GUIÓN DE VENTAS ===================== -->
+  <div id="viewGuion" class="view" role="tabpanel" aria-labelledby="tabGuion" hidden>
+
+    <a class="skip-link" href="#guionMain">Saltar al contenido</a>
+
+    <!-- Topbar -->
+    <header class="topbar" role="banner">
+      <div class="topbar__left">
+        <img src="./logo.png" alt="Musicala" class="brand__logo" loading="eager" decoding="async" onerror="this.style.display='none';" />
+        <div class="brand">
+          <div class="brand__title">Guión de ventas Musicala</div>
+          <div class="brand__subtitle">Flujo guiado · Preguntas · Respuestas · Cierre</div>
+        </div>
+      </div>
+
+      <div class="topbar__right">
+        <div class="chipset" role="group" aria-label="Canal de contacto">
+          <button class="chip is-active" type="button" data-channel="llamada" aria-pressed="true">📞 Llamada</button>
+          <button class="chip" type="button" data-channel="whatsapp" aria-pressed="false">💬 WhatsApp</button>
+          <button class="chip" type="button" data-channel="redes" aria-pressed="false">📩 Redes / Formulario</button>
+        </div>
+
+        <div class="topbar__actions" aria-label="Acciones">
+          <button class="iconbtn" type="button" id="btnReset" title="Reiniciar flujo" aria-label="Reiniciar flujo">🔄</button>
+          <button class="iconbtn" type="button" id="btnNotas" title="Notas" aria-label="Abrir notas">📝</button>
+          <button class="iconbtn" type="button" id="btnAyuda" title="Ayuda" aria-label="Abrir ayuda">❔</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Status / progreso -->
+    <section class="statusbar" aria-label="Estado del flujo">
+      <div class="statusbar__left">
+        <span class="badge" id="phaseBadge" aria-label="Fase actual">Exploración</span>
+        <span class="muted" id="phaseHint">Inicia con preguntas cortas y claras.</span>
+      </div>
+      <div class="statusbar__right">
+        <div class="progress" role="progressbar" aria-label="Progreso" aria-valuemin="0" aria-valuemax="100" aria-valuenow="10">
+          <div class="progress__bar" style="width:10%"></div>
+        </div>
+        <span class="muted small" id="progressText">Paso 1 de 6</span>
+      </div>
+    </section>
+
+    <!-- Layout principal -->
+    <main id="guionMain" class="layout" role="main">
+      <!-- Columna: Flujo -->
+      <section class="panel flow" aria-label="Flujo de conversación">
+        <div class="card flow__header">
+          <div class="card__title">📌 Paso actual</div>
+          <div class="card__desc" id="nodePrompt">Hola, gracias por comunicarte con Musicala 😊 ¿Cómo te puedo ayudar hoy?</div>
+          <div class="divider"></div>
+          <div class="script" aria-label="Guion sugerido">
+            <div class="script__label">Qué decir</div>
+            <div class="script__box" id="sayText">“Hola 😊 Soy ___ de Musicala. Para orientarte mejor, te hago 2 pregunticas rápidas.”</div>
+          </div>
+          <div class="hint hint--soft" id="dontSayBox" role="note" aria-label="Recomendación interna">
+            <strong>Tip interno:</strong> Sonríe al hablar. Sí, se nota por teléfono.
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__title">Opciones</div>
+          <div class="card__desc muted">Selecciona lo que el cliente respondió (o lo que quieres preguntar).</div>
+          <div class="options" id="options" aria-label="Opciones del flujo"></div>
+        </div>
+
+        <div class="card flow__path" aria-label="Ruta del flujo">
+          <div class="card__title">Ruta</div>
+          <div class="path" id="path" aria-label="Breadcrumb del flujo">
+            <span class="path__item is-active">Inicio</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Columna: Apoyo -->
+      <aside class="panel support" aria-label="Apoyos y atajos">
+        <div class="card">
+          <div class="card__title">📎 Datos clave</div>
+          <div class="kv" role="list">
+            <div class="kv__row" role="listitem"><div class="kv__k">Canal</div><div class="kv__v" id="kvChannel">Llamada</div></div>
+            <div class="kv__row" role="listitem"><div class="kv__k">Interés</div><div class="kv__v" id="kvInterest">—</div></div>
+            <div class="kv__row" role="listitem"><div class="kv__k">Servicio sugerido</div><div class="kv__v" id="kvService">—</div></div>
+            <div class="kv__row" role="listitem"><div class="kv__k">Estado</div><div class="kv__v" id="kvStatus"><span class="pill">Explorando</span></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__title">❓ Preguntas frecuentes</div>
+          <div class="card__desc muted">Atajos rápidos según lo que esté pasando en la conversación.</div>
+          <div class="faq" id="faq" aria-label="Preguntas frecuentes"></div>
+        </div>
+
+        <div class="card">
+          <div class="card__title">📝 Notas rápidas</div>
+          <div class="card__desc muted">Solo para uso interno (no se le lee al cliente, porfa 😅).</div>
+
+          <label class="field" for="noteName"><span class="field__label">Nombre del cliente</span>
+            <input class="input" id="noteName" type="text" placeholder="Ej: Diana" autocomplete="off" /></label>
+          <label class="field" for="noteGoal"><span class="field__label">Necesidad / objetivo</span>
+            <input class="input" id="noteGoal" type="text" placeholder="Ej: quiere clases de guitarra para su hijo" autocomplete="off" /></label>
+          <label class="field" for="noteObjection"><span class="field__label">Objeción principal</span>
+            <input class="input" id="noteObjection" type="text" placeholder="Ej: precio / horarios / ubicación" autocomplete="off" /></label>
+          <label class="field" for="noteExtra"><span class="field__label">Notas</span>
+            <textarea class="textarea textarea--big" id="noteExtra" placeholder="Detalles importantes…"></textarea></label>
+
+          <div class="actions" aria-label="Acciones de notas">
+            <button class="btn" type="button" id="btnSaveNotes">Guardar</button>
+            <button class="btn btn--ghost" type="button" id="btnClearNotes">Limpiar</button>
+            <button class="btn btn--ghost" type="button" id="btnShareWa" title="Copiar la nota al portapapeles" aria-label="Copiar nota">Copiar nota</button>
+          </div>
+        </div>
+
+        <div class="card" aria-label="Histórico de notas">
+          <div class="card__title">🗂️ Histórico</div>
+          <div class="card__desc muted">Últimas notas guardadas (para volver a cargarlas y copiar rápido).</div>
+          <div class="history" id="notesHistory"><div class="muted small">Aún no hay notas guardadas.</div></div>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="footer" role="contentinfo">
+      <div class="footer__left muted">Musicala · Guión de ventas · <span class="mono">v0.2</span></div>
+      <div class="footer__right muted small">Menos improvisación, más cierres 🧠✨</div>
+    </footer>
+
+    <!-- Modal: Ayuda -->
+    <dialog class="modal" id="helpModal" aria-labelledby="helpTitle">
+      <form method="dialog" class="modal__card">
+        <div class="modal__header">
+          <div class="modal__title" id="helpTitle">Ayuda rápida</div>
+          <button class="iconbtn" value="cancel" aria-label="Cerrar">✖️</button>
+        </div>
+        <div class="modal__body">
+          <ul class="list">
+            <li><strong>Objetivo:</strong> guiar la conversación hacia agendar/inscribir sin improvisar.</li>
+            <li><strong>Uso:</strong> elige la respuesta del cliente con los botones de “Opciones”.</li>
+            <li><strong>FAQs:</strong> usa respuestas cortas, sin parrafadas.</li>
+            <li><strong>Cierre:</strong> cuando haya señales positivas, propone un siguiente paso concreto.</li>
+            <li><strong>Notas:</strong> guarda y copia el resumen para pegarlo donde lo necesites.</li>
+          </ul>
+        </div>
+        <div class="modal__footer"><button class="btn btn--primary" value="default">Listo</button></div>
+      </form>
+    </dialog>
+
+    <!-- Modal: Notas -->
+    <dialog class="modal" id="notesModal" aria-labelledby="notesTitle">
+      <form method="dialog" class="modal__card">
+        <div class="modal__header">
+          <div class="modal__title" id="notesTitle">Notas</div>
+          <button class="iconbtn" value="cancel" aria-label="Cerrar">✖️</button>
+        </div>
+        <div class="modal__body">
+          <p class="muted">Ya puedes tomar notas en el panel derecho.</p>
+        </div>
+        <div class="modal__footer"><button class="btn" value="default">Cerrar</button></div>
+      </form>
+    </dialog>
+
+    <!-- Templates -->
+    <template id="tplOption"><button class="opt" type="button"></button></template>
+    <template id="tplPathItem"><span class="path__item"></span></template>
+    <template id="tplHistoryItem">
+      <div class="history__item">
+        <div class="history__meta">
+          <div class="history__title"></div>
+          <div class="history__sub muted small"></div>
+        </div>
+        <div class="history__actions">
+          <button class="btn btn--ghost history__btn" type="button" data-action="load">Cargar</button>
+          <button class="btn btn--ghost history__btn" type="button" data-action="share">Copiar</button>
+          <button class="btn btn--ghost history__btn" type="button" data-action="delete" aria-label="Eliminar">🗑️</button>
+        </div>
+      </div>
+    </template>
+
+  </div><!-- /#viewGuion -->
+
+  <script>
+    // Conmutador de vistas (Mensajes <-> Guión)
+    (function () {
+      var KEY = 'musicala_active_view_v1';
+      var views = { mensajes: document.getElementById('viewMensajes'), guion: document.getElementById('viewGuion') };
+      var tabs  = { mensajes: document.getElementById('tabMensajes'), guion: document.getElementById('tabGuion') };
+      function setView(name) {
+        if (!views[name]) name = 'mensajes';
+        Object.keys(views).forEach(function (k) {
+          var on = (k === name);
+          views[k].hidden = !on;
+          tabs[k].classList.toggle('is-active', on);
+          tabs[k].setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        try { localStorage.setItem(KEY, name); } catch (e) {}
+      }
+      tabs.mensajes.addEventListener('click', function () { setView('mensajes'); });
+      tabs.guion.addEventListener('click', function () { setView('guion'); });
+      var saved = 'mensajes';
+      try { saved = localStorage.getItem(KEY) || 'mensajes'; } catch (e) {}
+      setView(saved);
+    })();
+  </script>
+
   <script src="./project-knowledge.js"></script>
-  <script src="./app.js?v=20260613-musiaisistente-pro"></script>
+  <script src="./app.js?v=20260616-enable-disable"></script>
+  <script src="./guion.js?v=20260616-merge"></script>
 </body>
 </html>

@@ -63,6 +63,50 @@ textarea{ font:inherit; }
   border:0;
 }
 
+/* =========================
+   Conmutador de vistas
+========================= */
+.view-switcher{
+  display:flex;
+  gap:8px;
+  justify-content:center;
+  padding:12px 16px 0;
+}
+.view-tab{
+  border:1px solid var(--line);
+  background:var(--panel);
+  color:var(--muted);
+  padding:9px 16px;
+  border-radius:999px;
+  font-weight:700;
+  cursor:pointer;
+  transition:background .15s ease, color .15s ease, border-color .15s ease, transform .08s ease;
+}
+.view-tab:hover{ background:var(--soft); }
+.view-tab:active{ transform:translateY(1px); }
+.view-tab.is-active{
+  background:var(--mozart);
+  color:#fff;
+  border-color:var(--mozart);
+  box-shadow:var(--shadow-soft);
+}
+.view[hidden]{ display:none; }
+
+/* Mensajes inhabilitados */
+.row-disabled{ opacity:.55; background:repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(107,114,128,.05) 8px, rgba(107,114,128,.05) 16px); }
+.row-disabled td{ color:var(--muted); }
+.badge-off{
+  display:inline-block;
+  margin-left:8px;
+  padding:2px 8px;
+  border-radius:999px;
+  font-size:.72rem;
+  font-weight:700;
+  color:#fff;
+  background:var(--muted);
+  vertical-align:middle;
+}
+
 .skip{
   position:absolute;
   left:-999px;
@@ -105,22 +149,35 @@ textarea{ font:inherit; }
 }
 
 .brand-logo{
-  width:54px;
-  height:54px;
+  width:52px;
+  height:52px;
   object-fit:contain;
   border-radius:16px;
   background:white;
-  box-shadow:0 12px 26px rgba(12,65,196,.14);
+  padding:6px;
+  border:1px solid rgba(12,65,196,.12);
+  box-shadow:0 10px 22px rgba(12,65,196,.14);
 }
 
 .brand-text strong{
   display:block;
-  font-size:15px;
+  font-size:18px;
+  font-weight:800;
+  letter-spacing:-.01em;
+  line-height:1.15;
+  background:linear-gradient(120deg, var(--bach), var(--mozart) 55%, var(--brahms));
+  -webkit-background-clip:text;
+  background-clip:text;
+  color:transparent;
 }
 .brand-text span{
   display:block;
-  font-size:13px;
+  font-size:12px;
+  font-weight:700;
+  letter-spacing:.12em;
+  text-transform:uppercase;
   color:var(--muted);
+  margin-top:2px;
 }
 
 .topbar-actions{
@@ -167,6 +224,60 @@ textarea{ font:inherit; }
   border:1px solid rgba(220,38,38,.18);
 }
 .btn-danger:hover:not(:disabled){ background:rgba(220,38,38,.14); }
+
+/* Botón suave para acciones secundarias (importar, etc.) */
+.btn-soft{
+  background:var(--soft);
+  border:1px solid rgba(12,65,196,.14);
+  color:var(--mozart);
+  font-size:13px;
+  padding:8px 12px;
+}
+.btn-soft:hover:not(:disabled){ background:rgba(12,65,196,.10); }
+
+/* Interruptor "Modo edición" */
+.edit-toggle{
+  display:inline-flex;
+  align-items:center;
+  gap:10px;
+  border:1px solid var(--line);
+  background:var(--panel);
+  border-radius:999px;
+  padding:7px 12px 7px 14px;
+  font-weight:700;
+  font-size:14px;
+  color:var(--muted);
+  cursor:pointer;
+  transition:border-color .2s ease, color .2s ease, background .2s ease;
+}
+.edit-toggle:hover{ background:var(--soft); }
+.edit-toggle .switch{
+  position:relative;
+  width:40px;
+  height:22px;
+  border-radius:999px;
+  background:rgba(0,0,0,.16);
+  transition:background .2s ease;
+  flex:0 0 auto;
+}
+.edit-toggle .switch-dot{
+  position:absolute;
+  top:2px;
+  left:2px;
+  width:18px;
+  height:18px;
+  border-radius:999px;
+  background:#fff;
+  box-shadow:0 2px 5px rgba(0,0,0,.25);
+  transition:transform .2s ease;
+}
+.edit-toggle.is-on{
+  color:var(--ok);
+  border-color:rgba(22,163,74,.35);
+  background:rgba(22,163,74,.08);
+}
+.edit-toggle.is-on .switch{ background:var(--ok); }
+.edit-toggle.is-on .switch-dot{ transform:translateX(18px); }
 
 .badge{
   display:inline-block;
@@ -586,11 +697,20 @@ textarea{ font:inherit; }
 }
 
 .statusline{
-  margin-top:14px;
+  margin-top:16px;
+  padding-top:14px;
+  border-top:1px solid var(--line);
   display:flex;
   justify-content:space-between;
   align-items:center;
   gap:10px;
+  flex-wrap:wrap;
+}
+.statusline-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
 }
 
 .table-card{ margin-top:18px; }
