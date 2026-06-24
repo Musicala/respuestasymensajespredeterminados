@@ -1,11 +1,11 @@
 ﻿/* ============================================================================
   app.js — Mensajes Predeterminados · Musicala — PRO + MusiAsistente local
   -----------------------------------------------------------------------------
-  - Carga mensajes desde Apps Script.
+  - Carga mensajes desde Firebase Firestore.
   - Búsqueda en vivo acento-insensitive.
   - CRUD con prevención de duplicados accidentales.
   - MusiAsistente local: recomienda mensajes según contexto usando la base cargada.
-  - Sin IA real, sin llaves expuestas, sin invocar espíritus del CORS.
+  - Sin IA real.
 ============================================================================ */
 
 'use strict';
@@ -13,10 +13,11 @@
 /** =========================
  *  CONFIG
  *  ========================= */
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyOTN0ltVA4dvyoFPKySyRPJ1iOd1V1LMrf0QELN6L8GQfjcrAN2ZsntTSowbKv9m7y5A/exec';
-const API_KEY = 'MUSICALA_MSGS_2026';
 const BACKUP_MESSAGES_URL = './messages-backup.json';
 const HTTP_TIMEOUT_MS = 15000;
+const FIREBASE_MESSAGES_COLLECTION = (window.MUSICALA_MESSAGES_FIREBASE && window.MUSICALA_MESSAGES_FIREBASE.collection) || 'respuestasPredeterminadas';
+const FIREBASE_AUDIO_STORAGE_PATH = (window.MUSICALA_MESSAGES_FIREBASE && window.MUSICALA_MESSAGES_FIREBASE.audioStoragePath) || 'respuestas-predeterminadas-audios';
+const MAX_AUDIO_SIZE_BYTES = 25 * 1024 * 1024;
 const MIN_TOKEN_LEN = 2;
 const MAX_ASSISTANT_RESULTS = 5;
 const ASSISTANT_FAVORITES_KEY = 'musicala.assistant.favorites.v1';
@@ -31,9 +32,21 @@ let editMode = false;
 let isLoading = false;
 let isSaving = false;
 let modalMode = 'create';
-// true cuando los datos vienen de la hoja oficial (editable).
+// true cuando los datos vienen de Firebase (editable).
 // false cuando se muestra el respaldo local (solo lectura).
 let editableSource = false;
+let firebaseApp = null;
+let firebaseAuth = null;
+let firebaseDb = null;
+let firebaseStorage = null;
+let firebaseUser = null;
+let firebaseReady = false;
+let currentModalMessage = null;
+let mediaRecorder = null;
+let recordingStream = null;
+let recordingChunks = [];
+let recordedAudioFile = null;
+let recordedAudioUrl = '';
 
 /** =========================
  *  DOM
@@ -48,6 +61,7 @@ const statusText       = $('#statusText');
 const btnReload        = $('#btnReload');
 const btnNew           = $('#btnNew');
 const btnImport        = $('#btnImport');
+const btnSignIn        = $('#btnSignIn');
 const btnToggleEdit    = $('#btnToggleEdit');
 const editStateBadge   = $('#editState');
 const toastEl          = $('#toast');
@@ -63,6 +77,14 @@ const msgId            = $('#msgId');
 const msgCategoria     = $('#msgCategoria');
 const msgAtajo         = $('#msgAtajo');
 const msgMensaje       = $('#msgMensaje');
+const msgAudio         = $('#msgAudio');
+const msgRemoveAudio   = $('#msgRemoveAudio');
+const currentAudioBox  = $('#currentAudioBox');
+const btnRecordAudio   = $('#btnRecordAudio');
+const btnStopRecordAudio = $('#btnStopRecordAudio');
+const btnDiscardRecording = $('#btnDiscardRecording');
+const recordingStatus  = $('#recordingStatus');
+const recordingPreview = $('#recordingPreview');
 
 const assistantInput   = $('#assistantInput');
 const btnAskAssistant  = $('#btnAskAssistant');
@@ -433,6 +455,7 @@ function scoreMatch(haystack, tokens) {
 function lockUI() {
   setDisabled(btnReload, isLoading || isSaving);
   setDisabled(btnImport, isLoading || isSaving);
+  setDisabled(btnSignIn, isLoading || isSaving);
   setDisabled(btnNew, isLoading || isSaving);
   setDisabled(btnToggleEdit, isLoading || isSaving);
   setDisabled(btnAskAssistant, isLoading || isSaving);
@@ -442,6 +465,9 @@ function lockUI() {
   setDisabled(msgCategoria, isSaving);
   setDisabled(msgAtajo, isSaving);
   setDisabled(msgMensaje, isSaving);
+  setDisabled(msgAudio, isSaving);
+  setDisabled(msgRemoveAudio, isSaving || !(currentModalMessage && currentModalMessage.audio && currentModalMessage.audio.url));
+  setRecordingControls(mediaRecorder && mediaRecorder.state === 'recording');
 }
 
 function setSavingButton(on) {
@@ -473,11 +499,21 @@ function initAssistantAvatars() {
 /** =========================
  *  API HELPERS
  *  ========================= */
-function apiUrl(action) {
-  const u = new URL(WEB_APP_URL);
-  u.searchParams.set('action', action);
-  u.searchParams.set('key', API_KEY);
-  return u.toString();
+function ensureFirebaseReady() {
+  if (!window.firebase || !window.MUSICALA_FIREBASE_CONFIG) {
+    throw new Error('Firebase no está cargado. Revisa firebase-config.js y los scripts del SDK.');
+  }
+
+  if (!firebaseApp) {
+    firebaseApp = window.firebase.apps && window.firebase.apps.length
+      ? window.firebase.app()
+      : window.firebase.initializeApp(window.MUSICALA_FIREBASE_CONFIG);
+    firebaseAuth = window.firebase.auth();
+    firebaseDb = window.firebase.firestore();
+    firebaseStorage = window.firebase.storage();
+  }
+
+  return { auth: firebaseAuth, db: firebaseDb, storage: firebaseStorage };
 }
 
 async function fetchJson(url, options = {}) {
@@ -503,12 +539,127 @@ async function fetchJson(url, options = {}) {
   }
 }
 
-async function apiGetList() {
-  const data = await fetchJson(apiUrl('list'), { method: 'GET' });
-  if (!data || data.ok !== true) {
-    throw new Error((data && data.error) ? data.error : 'Error cargando mensajes');
+function updateAuthButton() {
+  if (!btnSignIn) return;
+  if (firebaseUser && firebaseUser.email) {
+    btnSignIn.textContent = firebaseUser.email;
+    btnSignIn.title = 'Sesión iniciada en Firebase';
+    return;
   }
-  return Array.isArray(data.data) ? data.data : [];
+  btnSignIn.textContent = 'Entrar con Google';
+  btnSignIn.title = 'Iniciar sesión para editar desde Firebase';
+}
+
+async function signInToFirebaseIfNeeded({ interactive = false } = {}) {
+  const { auth } = ensureFirebaseReady();
+  if (auth.currentUser) {
+    firebaseUser = auth.currentUser;
+    firebaseReady = true;
+    updateAuthButton();
+    return firebaseUser;
+  }
+
+  await new Promise((resolve) => {
+    const unsub = auth.onAuthStateChanged((user) => {
+      unsub();
+      resolve(user || null);
+    });
+  });
+
+  if (auth.currentUser) {
+    firebaseUser = auth.currentUser;
+    firebaseReady = true;
+    updateAuthButton();
+    return firebaseUser;
+  }
+
+  if (!interactive) {
+    updateAuthButton();
+    throw new Error('Inicia sesión con Google para cargar los mensajes de Firebase.');
+  }
+
+  const provider = new window.firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  const result = await auth.signInWithPopup(provider);
+  firebaseUser = result.user;
+  firebaseReady = true;
+  updateAuthButton();
+  return firebaseUser;
+}
+
+function messagesCollection() {
+  const { db } = ensureFirebaseReady();
+  return db.collection(FIREBASE_MESSAGES_COLLECTION);
+}
+
+function audioStorageRef(messageId, fileName) {
+  const { storage } = ensureFirebaseReady();
+  const safeName = String(fileName || 'audio')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 90);
+  const stamp = Date.now();
+  return storage.ref().child(`${FIREBASE_AUDIO_STORAGE_PATH}/${messageId}/${stamp}-${safeName}`);
+}
+
+function cleanMessagePayload(payload = {}) {
+  return {
+    categoria: String(payload.categoria || '').trim(),
+    atajo: String(payload.atajo || '').trim(),
+    mensaje: String(payload.mensaje || '').trim()
+  };
+}
+
+function validateMessagePayload(payload = {}, requireId = false) {
+  const id = String(payload.id || '').trim();
+  const data = cleanMessagePayload(payload);
+  if (requireId && !id) throw new Error('Falta id del mensaje.');
+  if (!data.categoria) throw new Error('Falta categoría.');
+  if (!data.atajo) throw new Error('Falta atajo.');
+  if (!data.mensaje) throw new Error('Falta mensaje.');
+  return { id, ...data };
+}
+
+function firebaseMessageFromDoc(doc) {
+  const data = doc.data() || {};
+  return {
+    id: doc.id,
+    categoria: String(data.categoria || '').trim(),
+    atajo: String(data.atajo || '').trim(),
+    mensaje: String(data.mensaje || '').trim(),
+    activo: data.activo !== false,
+    archivado: data.archivado === true,
+    tipo: data.tipo || 'texto',
+    audio: data.audio || null
+  };
+}
+
+async function findDuplicateDoc(categoria, atajo, excludeId = '') {
+  const wantedCat = normSearch(categoria);
+  const wantedAtajo = normSearch(atajo);
+  const snap = await messagesCollection()
+    .where('archivado', '==', false)
+    .where('key', '==', `${wantedCat}||${wantedAtajo}`)
+    .limit(5)
+    .get();
+
+  let duplicate = null;
+  snap.forEach((doc) => {
+    if (!duplicate && doc.id !== excludeId) duplicate = doc;
+  });
+  return duplicate;
+}
+
+async function apiGetList() {
+  await signInToFirebaseIfNeeded({ interactive: false });
+  const snap = await messagesCollection()
+    .where('archivado', '==', false)
+    .get();
+  const messages = [];
+  snap.forEach((doc) => messages.push(firebaseMessageFromDoc(doc)));
+  return messages;
 }
 
 async function loadBackupMessages() {
@@ -520,16 +671,347 @@ async function loadBackupMessages() {
 }
 
 async function apiPost(action, payload) {
-  const data = await fetchJson(apiUrl(action), {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(payload || {})
-  });
+  await signInToFirebaseIfNeeded({ interactive: true });
+  const now = window.firebase.firestore.FieldValue.serverTimestamp();
 
-  if (!data || data.ok !== true) {
-    throw new Error((data && data.error) ? data.error : 'Error en la operación');
+  if (action === 'create') {
+    const data = validateMessagePayload(payload, false);
+    const duplicate = await findDuplicateDoc(data.categoria, data.atajo);
+    if (duplicate) {
+      throw new Error('Ya existe un mensaje activo con esa categoría y ese atajo. Edita el existente.');
+    }
+    const ref = await messagesCollection().add({
+      categoria: data.categoria,
+      atajo: data.atajo,
+      mensaje: data.mensaje,
+      key: `${normSearch(data.categoria)}||${normSearch(data.atajo)}`,
+      tipo: 'texto',
+      activo: true,
+      archivado: false,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: firebaseUser ? firebaseUser.email : '',
+      updatedBy: firebaseUser ? firebaseUser.email : ''
+    });
+    return { id: ref.id };
   }
-  return data.data;
+
+  if (action === 'update') {
+    const data = validateMessagePayload(payload, true);
+    const duplicate = await findDuplicateDoc(data.categoria, data.atajo, data.id);
+    if (duplicate) throw new Error('Ya existe otro mensaje activo con esa categoría y ese atajo.');
+    const ref = messagesCollection().doc(data.id);
+    const doc = await ref.get();
+    if (!doc.exists) throw new Error('No se encontró el mensaje con ese ID. No se creó ningún registro nuevo.');
+    await ref.update({
+      categoria: data.categoria,
+      atajo: data.atajo,
+      mensaje: data.mensaje,
+      key: `${normSearch(data.categoria)}||${normSearch(data.atajo)}`,
+      activo: true,
+      archivado: false,
+      updatedAt: now,
+      updatedBy: firebaseUser ? firebaseUser.email : ''
+    });
+    return { id: data.id };
+  }
+
+  if (action === 'archive') {
+    const id = String(payload && payload.id || '').trim();
+    if (!id) throw new Error('Falta id del mensaje.');
+    const ref = messagesCollection().doc(id);
+    const doc = await ref.get();
+    if (!doc.exists) throw new Error('No se encontró el mensaje con ese ID. No se creó ningún registro nuevo.');
+    await ref.update({
+      activo: false,
+      archivado: true,
+      updatedAt: now,
+      updatedBy: firebaseUser ? firebaseUser.email : ''
+    });
+    return { id, archived: true };
+  }
+
+  if (action === 'setActive') {
+    const id = String(payload && payload.id || '').trim();
+    if (!id) throw new Error('Falta id del mensaje.');
+    const activo = payload && payload.activo === true;
+    const ref = messagesCollection().doc(id);
+    const doc = await ref.get();
+    if (!doc.exists) throw new Error('No se encontró el mensaje con ese ID. No se creó ningún registro nuevo.');
+    await ref.update({
+      activo,
+      updatedAt: now,
+      updatedBy: firebaseUser ? firebaseUser.email : ''
+    });
+    return { id, activo };
+  }
+
+  if (action === 'setAudio') {
+    const id = String(payload && payload.id || '').trim();
+    if (!id) throw new Error('Falta id del mensaje.');
+    const ref = messagesCollection().doc(id);
+    const doc = await ref.get();
+    if (!doc.exists) throw new Error('No se encontró el mensaje con ese ID. No se creó ningún registro nuevo.');
+    await ref.update({
+      audio: payload && payload.audio ? payload.audio : null,
+      tipo: payload && payload.audio ? 'mixto' : 'texto',
+      updatedAt: now,
+      updatedBy: firebaseUser ? firebaseUser.email : ''
+    });
+    return { id, audio: payload && payload.audio ? payload.audio : null };
+  }
+
+  if (action === 'import') {
+    const items = Array.isArray(payload && payload.messages) ? payload.messages : [];
+    if (!items.length) throw new Error('No se enviaron mensajes para importar.');
+
+    let imported = 0;
+    let skipped = 0;
+    let batch = firebaseDb.batch();
+    let batchCount = 0;
+
+    for (const item of items) {
+      const data = cleanMessagePayload(item);
+      if (!data.categoria || !data.atajo || !data.mensaje) {
+        skipped++;
+        continue;
+      }
+
+      const duplicate = await findDuplicateDoc(data.categoria, data.atajo);
+      if (duplicate) {
+        skipped++;
+        continue;
+      }
+
+      const ref = String(item.id || '').trim()
+        ? messagesCollection().doc(String(item.id).trim())
+        : messagesCollection().doc();
+
+      if (String(item.id || '').trim()) {
+        const existingDoc = await ref.get();
+        if (existingDoc.exists) {
+          skipped++;
+          continue;
+        }
+      }
+
+      batch.set(ref, {
+        categoria: data.categoria,
+        atajo: data.atajo,
+        mensaje: data.mensaje,
+        key: `${normSearch(data.categoria)}||${normSearch(data.atajo)}`,
+        tipo: 'texto',
+        activo: item.activo === false ? false : true,
+        archivado: false,
+        createdAt: now,
+        updatedAt: now,
+        createdBy: firebaseUser ? firebaseUser.email : '',
+        updatedBy: firebaseUser ? firebaseUser.email : '',
+        importedFrom: 'messages-backup.json'
+      }, { merge: true });
+      imported++;
+      batchCount++;
+
+      if (batchCount >= 450) {
+        await batch.commit();
+        batch = firebaseDb.batch();
+        batchCount = 0;
+      }
+    }
+
+    if (batchCount) await batch.commit();
+    return { imported, skipped, total: items.length };
+  }
+
+  throw new Error('Acción no soportada: ' + action);
+}
+
+function validateAudioFile(file) {
+  if (!file) return;
+  if (!String(file.type || '').startsWith('audio/')) {
+    throw new Error('El archivo seleccionado no parece ser audio.');
+  }
+  if (file.size > MAX_AUDIO_SIZE_BYTES) {
+    throw new Error('El audio supera 25 MB. Usa una nota de voz mas corta o comprimida.');
+  }
+}
+
+async function uploadAudioForMessage(messageId, file) {
+  validateAudioFile(file);
+  const ref = audioStorageRef(messageId, file.name);
+  const snap = await ref.put(file, {
+    contentType: file.type || 'audio/mpeg',
+    customMetadata: {
+      messageId,
+      uploadedBy: firebaseUser ? firebaseUser.email || '' : ''
+    }
+  });
+  const url = await snap.ref.getDownloadURL();
+  return {
+    url,
+    path: snap.ref.fullPath,
+    name: file.name || 'audio',
+    contentType: file.type || 'audio/mpeg',
+    size: file.size || 0,
+    uploadedAt: new Date().toISOString(),
+    uploadedBy: firebaseUser ? firebaseUser.email || '' : ''
+  };
+}
+
+async function deleteAudioByPath(path) {
+  const cleanPath = String(path || '').trim();
+  if (!cleanPath) return;
+  try {
+    const { storage } = ensureFirebaseReady();
+    await storage.ref().child(cleanPath).delete();
+  } catch (err) {
+    console.warn('No se pudo borrar el audio anterior:', err);
+  }
+}
+
+function setRecordingStatus(text) {
+  if (recordingStatus) recordingStatus.textContent = text;
+}
+
+function setRecordingControls(recording = false) {
+  if (btnRecordAudio) btnRecordAudio.hidden = recording;
+  if (btnStopRecordAudio) btnStopRecordAudio.hidden = !recording;
+  if (btnDiscardRecording) btnDiscardRecording.hidden = !recordedAudioFile;
+  setDisabled(btnRecordAudio, isSaving || recording);
+  setDisabled(btnStopRecordAudio, isSaving || !recording);
+  setDisabled(btnDiscardRecording, isSaving || !recordedAudioFile);
+}
+
+function stopRecordingStream() {
+  if (recordingStream) {
+    recordingStream.getTracks().forEach(track => track.stop());
+  }
+  recordingStream = null;
+}
+
+function clearRecordedAudio() {
+  if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
+  recordedAudioUrl = '';
+  recordedAudioFile = null;
+  recordingChunks = [];
+  if (recordingPreview) {
+    recordingPreview.removeAttribute('src');
+    recordingPreview.hidden = true;
+  }
+  setRecordingStatus('También puedes grabar el audio aquí mismo.');
+  setRecordingControls(false);
+}
+
+function getSupportedRecordingMimeType() {
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/mpeg'
+  ];
+  if (!window.MediaRecorder || !window.MediaRecorder.isTypeSupported) return '';
+  return candidates.find(type => window.MediaRecorder.isTypeSupported(type)) || '';
+}
+
+function recordedExtension(type) {
+  if (String(type || '').includes('mp4')) return 'm4a';
+  if (String(type || '').includes('mpeg')) return 'mp3';
+  return 'webm';
+}
+
+function downloadFileNameForAudio(message, audio) {
+  const base = [
+    'musicala',
+    normSearch(message && message.atajo ? message.atajo : 'nota-voz').replace(/[^a-z0-9]+/g, '-'),
+    normSearch(message && message.categoria ? message.categoria : '').replace(/[^a-z0-9]+/g, '-')
+  ].filter(Boolean).join('-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const original = String(audio && audio.name || '');
+  const extMatch = original.match(/\.([a-z0-9]{2,5})$/i);
+  const ext = extMatch ? extMatch[1].toLowerCase() : 'webm';
+  return `${base || 'musicala-nota-voz'}.${ext}`;
+}
+
+async function startAudioRecording() {
+  if (isSaving) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+    toast('Este navegador no permite grabar audio desde la app.', 'warn');
+    return;
+  }
+
+  try {
+    clearRecordedAudio();
+    recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = getSupportedRecordingMimeType();
+    mediaRecorder = mimeType
+      ? new MediaRecorder(recordingStream, { mimeType })
+      : new MediaRecorder(recordingStream);
+    recordingChunks = [];
+
+    mediaRecorder.addEventListener('dataavailable', (event) => {
+      if (event.data && event.data.size > 0) recordingChunks.push(event.data);
+    });
+
+    mediaRecorder.addEventListener('stop', () => {
+      const type = mediaRecorder && mediaRecorder.mimeType ? mediaRecorder.mimeType : 'audio/webm';
+      const blob = new Blob(recordingChunks, { type });
+      const ext = recordedExtension(type);
+      recordedAudioFile = new File([blob], `nota-voz-${Date.now()}.${ext}`, { type });
+      recordedAudioUrl = URL.createObjectURL(blob);
+      if (recordingPreview) {
+        recordingPreview.src = recordedAudioUrl;
+        recordingPreview.hidden = false;
+      }
+      stopRecordingStream();
+      mediaRecorder = null;
+      if (msgAudio) msgAudio.value = '';
+      setRecordingStatus('Grabación lista. Escúchala antes de guardar.');
+      setRecordingControls(false);
+    });
+
+    mediaRecorder.start();
+    setRecordingStatus('Grabando... habla cerca del micrófono.');
+    setRecordingControls(true);
+  } catch (err) {
+    console.error(err);
+    stopRecordingStream();
+    mediaRecorder = null;
+    setRecordingControls(false);
+    toast('No pude activar el micrófono. Revisa permisos del navegador.', 'bad');
+  }
+}
+
+function stopAudioRecording() {
+  if (!mediaRecorder) return;
+  if (mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+  setRecordingStatus('Procesando grabación...');
+  setRecordingControls(false);
+}
+
+function renderCurrentAudio(audio) {
+  if (!currentAudioBox) return;
+  currentAudioBox.innerHTML = '';
+  if (!audio || !audio.url) {
+    currentAudioBox.hidden = true;
+    if (msgRemoveAudio) {
+      msgRemoveAudio.checked = false;
+      msgRemoveAudio.disabled = true;
+    }
+    return;
+  }
+
+  const label = document.createElement('div');
+  label.className = 'current-audio-label';
+  label.textContent = `Audio actual: ${audio.name || 'nota de voz'}`;
+
+  const player = document.createElement('audio');
+  player.controls = true;
+  player.preload = 'metadata';
+  player.src = audio.url;
+
+  currentAudioBox.appendChild(label);
+  currentAudioBox.appendChild(player);
+  currentAudioBox.hidden = false;
+  if (msgRemoveAudio) msgRemoveAudio.disabled = false;
 }
 
 /** =========================
@@ -539,6 +1021,7 @@ function openModal(mode, data = null) {
   if (!modalBackdrop || !modalEl) return;
 
   modalMode = mode === 'edit' ? 'edit' : 'create';
+  currentModalMessage = data || null;
   modalTitle.textContent = modalMode === 'edit' ? 'Editar mensaje' : 'Nuevo mensaje';
   if (btnSave) btnSave.textContent = modalMode === 'edit' ? 'Guardar cambios' : 'Crear mensaje';
 
@@ -546,6 +1029,10 @@ function openModal(mode, data = null) {
   msgCategoria.value = data?.categoria || '';
   msgAtajo.value     = data?.atajo || '';
   msgMensaje.value   = data?.mensaje || '';
+  if (msgAudio) msgAudio.value = '';
+  if (msgRemoveAudio) msgRemoveAudio.checked = false;
+  clearRecordedAudio();
+  renderCurrentAudio(data?.audio || null);
 
   modalBackdrop.hidden = false;
   modalEl.hidden = false;
@@ -556,15 +1043,25 @@ function openModal(mode, data = null) {
   }, 50);
 }
 
-function closeModal() {
+function resetModalState() {
   if (!modalBackdrop || !modalEl) return;
-  if (isSaving) return;
   modalBackdrop.hidden = true;
   modalEl.hidden = true;
   if (form) form.reset();
   if (msgId) msgId.value = '';
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+  stopRecordingStream();
+  currentModalMessage = null;
+  clearRecordedAudio();
+  renderCurrentAudio(null);
   modalMode = 'create';
   if (btnSave) btnSave.textContent = 'Crear mensaje';
+}
+
+function closeModal({ force = false } = {}) {
+  if (!modalBackdrop || !modalEl) return;
+  if (isSaving && !force) return;
+  resetModalState();
 }
 
 /** =========================
@@ -687,7 +1184,38 @@ function render() {
 
     const tdMsg = document.createElement('td');
     const msgWrap = document.createElement('div');
+    msgWrap.className = 'message-text';
     msgWrap.appendChild(safeMessageToNodes(m.mensaje || ''));
+
+    if (m.audio && m.audio.url) {
+      const audioWrap = document.createElement('div');
+      audioWrap.className = 'message-audio';
+
+      const audioLabel = document.createElement('div');
+      audioLabel.className = 'message-audio-label';
+      audioLabel.textContent = m.audio.name || 'Nota de voz';
+
+      const player = document.createElement('audio');
+      player.controls = true;
+      player.preload = 'metadata';
+      player.src = m.audio.url;
+
+      const downloadLink = document.createElement('a');
+      downloadLink.className = 'audio-download-btn';
+      downloadLink.href = m.audio.url;
+      downloadLink.download = downloadFileNameForAudio(m, m.audio);
+      downloadLink.textContent = 'Descargar para WhatsApp';
+
+      const helper = document.createElement('div');
+      helper.className = 'message-audio-helper';
+      helper.textContent = 'Descárgalo y arrástralo a WhatsApp Web.';
+
+      audioWrap.appendChild(audioLabel);
+      audioWrap.appendChild(player);
+      audioWrap.appendChild(downloadLink);
+      audioWrap.appendChild(helper);
+      msgWrap.appendChild(audioWrap);
+    }
 
     const btnCopy = document.createElement('button');
     btnCopy.type = 'button';
@@ -703,15 +1231,16 @@ function render() {
     tdAct.className = 'col-actions';
 
     if (editMode) {
+      const actionWrap = document.createElement('div');
+      actionWrap.className = 'row-actions';
+
       const btnEdit = document.createElement('button');
       btnEdit.type = 'button';
-      btnEdit.className = 'btn btn-ghost';
-      btnEdit.style.padding = '7px 10px';
-      btnEdit.style.borderRadius = '12px';
+      btnEdit.className = 'btn btn-ghost btn-compact';
       btnEdit.textContent = 'Editar';
       btnEdit.addEventListener('click', () => {
         if (!m.id) {
-          toast('Este mensaje no tiene ID. Revisa el Apps Script o recarga la fuente.', 'bad');
+          toast('Este mensaje no tiene ID. Revisa Firebase o recarga la fuente.', 'bad');
           return;
         }
         openModal('edit', m);
@@ -719,19 +1248,13 @@ function render() {
 
       const btnToggle = document.createElement('button');
       btnToggle.type = 'button';
-      btnToggle.className = 'btn btn-ghost';
-      btnToggle.style.padding = '7px 10px';
-      btnToggle.style.borderRadius = '12px';
-      btnToggle.style.marginLeft = '8px';
+      btnToggle.className = 'btn btn-ghost btn-compact';
       btnToggle.textContent = disabled ? 'Habilitar' : 'Inhabilitar';
       btnToggle.addEventListener('click', () => setMessageActive(m, disabled));
 
       const btnArch = document.createElement('button');
       btnArch.type = 'button';
-      btnArch.className = 'btn btn-danger';
-      btnArch.style.padding = '7px 10px';
-      btnArch.style.borderRadius = '12px';
-      btnArch.style.marginLeft = '8px';
+      btnArch.className = 'btn btn-danger btn-compact';
       btnArch.textContent = 'Archivar';
       btnArch.addEventListener('click', () => archiveMessage(m));
 
@@ -741,9 +1264,10 @@ function render() {
         btnArch.disabled = true;
       }
 
-      tdAct.appendChild(btnEdit);
-      tdAct.appendChild(btnToggle);
-      tdAct.appendChild(btnArch);
+      actionWrap.appendChild(btnEdit);
+      actionWrap.appendChild(btnToggle);
+      actionWrap.appendChild(btnArch);
+      tdAct.appendChild(actionWrap);
     } else {
       const muted = document.createElement('span');
       muted.className = 'muted';
@@ -1306,16 +1830,16 @@ async function load() {
     let messages = [];
     let fromBackup = false;
 
-    // 1) La hoja oficial es la única fuente editable.
+    // 1) Firebase es la única fuente editable.
     try {
       messages = await apiGetList();
       editableSource = true;
     } catch (err) {
-      console.error('No se pudo leer la hoja oficial:', err);
+      console.error('No se pudo leer Firebase:', err);
       editableSource = false;
     }
 
-    // 2) Si la hoja está vacía o no respondió, usamos el respaldo SOLO para lectura.
+    // 2) Si Firebase está vacío o no respondió, usamos el respaldo SOLO para lectura.
     if (!messages.length) {
       const backup = await loadBackupMessages().catch(() => []);
       if (backup.length) {
@@ -1343,16 +1867,16 @@ async function load() {
     if (assistantResults && assistantResults.children.length) askAssistant();
 
     if (fromBackup) {
-      setStatus(`Mostrando ${allMessages.length} mensajes desde el respaldo local (solo lectura). Usa "Importar a la hoja" para poder editar.`);
+      setStatus(`Mostrando ${allMessages.length} mensajes desde el respaldo local (solo lectura). Usa "Importar respaldo" para subirlos a Firebase.`);
       setAssistantMeta(`Respaldo local: ${allMessages.length} mensajes (solo lectura).`);
     } else {
-      setStatus(`Cargado: ${allMessages.length} mensajes desde la hoja oficial Mensajes.`);
+      setStatus(`Cargado: ${allMessages.length} mensajes desde Firebase.`);
       setAssistantMeta(`Base oficial lista: ${allMessages.length} mensajes disponibles para recomendar.`);
     }
   } catch (err) {
     console.error(err);
     setStatus('Error cargando.');
-    setAssistantMeta('No pude cargar la base de mensajes. Revisa la URL de Apps Script o permisos.');
+    setAssistantMeta('No pude cargar la base de mensajes. Revisa Firebase Auth, Firestore o permisos.');
     toast(String(err.message || err), 'bad');
   } finally {
     isLoading = false;
@@ -1362,11 +1886,11 @@ async function load() {
 
 /**
  * Bloquea cualquier escritura cuando lo que se muestra es el respaldo local.
- * Evita el error "No se encontró el mensaje con ese ID" por IDs que no están en la hoja.
+ * Evita el error "No se encontró el mensaje con ese ID" por IDs que no están en Firebase.
  */
 function requireEditableSource() {
   if (editableSource) return true;
-  toast('Estás viendo el respaldo local (solo lectura). Usa "Importar a la hoja" para poder editar.', 'warn');
+  toast('Estás viendo el respaldo local (solo lectura). Usa "Importar respaldo" para subirlo a Firebase.', 'warn');
   return false;
 }
 
@@ -1380,14 +1904,14 @@ async function importBackupToSheet() {
   }
 
   const ok = confirm(
-    `¿Importar ${backup.length} mensajes del respaldo a la hoja oficial?\n\n` +
+    `¿Importar ${backup.length} mensajes del respaldo a Firebase?\n\n` +
     'No se crean duplicados: se omiten los que ya existen (por ID o por categoría + atajo).'
   );
   if (!ok) return;
 
   isSaving = true;
   lockUI();
-  setStatus('Importando a la hoja oficial…');
+  setStatus('Importando a Firebase…');
 
   try {
     const res = await apiPost('import', { messages: backup });
@@ -1413,6 +1937,14 @@ async function saveFromModal() {
   const categoria = (msgCategoria ? msgCategoria.value : '').trim();
   const atajo = (msgAtajo ? msgAtajo.value : '').trim();
   const mensaje = (msgMensaje ? msgMensaje.value : '').trim();
+  const selectedAudioFile = msgAudio && msgAudio.files && msgAudio.files[0] ? msgAudio.files[0] : null;
+  const audioFile = selectedAudioFile || recordedAudioFile;
+  const shouldRemoveAudio = !!(msgRemoveAudio && msgRemoveAudio.checked);
+
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    toast('Detén la grabación antes de guardar.', 'warn');
+    return;
+  }
 
   if (modalMode === 'draft') {
     if (!mensaje) {
@@ -1426,6 +1958,13 @@ async function saveFromModal() {
 
   if (!categoria || !atajo || !mensaje) {
     toast('Completa categoría, atajo y mensaje.', 'warn');
+    return;
+  }
+
+  try {
+    if (audioFile) validateAudioFile(audioFile);
+  } catch (err) {
+    toast(String(err.message || err), 'bad');
     return;
   }
 
@@ -1444,15 +1983,32 @@ async function saveFromModal() {
   isSaving = true;
   setSavingButton(true);
   lockUI();
-  setStatus('Guardando cambios…');
+  setStatus(audioFile ? 'Guardando y subiendo audio…' : 'Guardando cambios…');
 
   try {
+    let savedId = id;
     if (id) {
       await apiPost('update', { id, categoria, atajo, mensaje });
       toast('Mensaje actualizado ✅', 'ok');
     } else {
-      await apiPost('create', { categoria, atajo, mensaje });
+      const created = await apiPost('create', { categoria, atajo, mensaje });
+      savedId = created && created.id ? created.id : '';
       toast('Mensaje creado ✅', 'ok');
+    }
+
+    if (audioFile && savedId) {
+      if (currentModalMessage && currentModalMessage.audio && currentModalMessage.audio.path) {
+        await deleteAudioByPath(currentModalMessage.audio.path);
+      }
+      const audio = await uploadAudioForMessage(savedId, audioFile);
+      await apiPost('setAudio', { id: savedId, audio });
+      toast('Mensaje y audio guardados ✅', 'ok');
+    } else if (shouldRemoveAudio && savedId) {
+      if (currentModalMessage && currentModalMessage.audio && currentModalMessage.audio.path) {
+        await deleteAudioByPath(currentModalMessage.audio.path);
+      }
+      await apiPost('setAudio', { id: savedId, audio: null });
+      toast('Audio quitado ✅', 'ok');
     }
 
     isSaving = false;
@@ -1549,10 +2105,35 @@ function wireEvents() {
   if (categorySelect) categorySelect.addEventListener('change', () => render());
   if (btnReload) btnReload.addEventListener('click', () => load());
 
+  if (btnSignIn) {
+    btnSignIn.addEventListener('click', async () => {
+      if (isLoading || isSaving) return;
+      try {
+        setStatus('Conectando con Firebase…');
+        await signInToFirebaseIfNeeded({ interactive: true });
+        await load();
+      } catch (err) {
+        console.error(err);
+        setStatus('No se pudo iniciar sesión.');
+        toast(String(err.message || err), 'bad');
+      }
+    });
+  }
+
   if (btnImport) btnImport.addEventListener('click', () => importBackupToSheet());
+
+  if (btnRecordAudio) btnRecordAudio.addEventListener('click', startAudioRecording);
+  if (btnStopRecordAudio) btnStopRecordAudio.addEventListener('click', stopAudioRecording);
+  if (btnDiscardRecording) btnDiscardRecording.addEventListener('click', clearRecordedAudio);
+  if (msgAudio) {
+    msgAudio.addEventListener('change', () => {
+      if (msgAudio.files && msgAudio.files[0]) clearRecordedAudio();
+    });
+  }
 
   if (btnNew) {
     btnNew.addEventListener('click', () => {
+      if (isLoading || isSaving) return;
       if (!editMode) setEditMode(true);
       openModal('create');
     });
@@ -1581,12 +2162,12 @@ function wireEvents() {
     });
   });
 
-  if (btnCloseModal) btnCloseModal.addEventListener('click', closeModal);
-  if (btnCancel) btnCancel.addEventListener('click', closeModal);
-  if (modalBackdrop) modalBackdrop.addEventListener('click', closeModal);
+  if (btnCloseModal) btnCloseModal.addEventListener('click', () => closeModal({ force: true }));
+  if (btnCancel) btnCancel.addEventListener('click', () => closeModal({ force: true }));
+  if (modalBackdrop) modalBackdrop.addEventListener('click', () => closeModal({ force: true }));
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && modalEl && !modalEl.hidden) closeModal();
+    if (e.key === 'Escape' && modalEl && !modalEl.hidden) closeModal({ force: true });
     else if (e.key === 'Escape' && assistantPanel && !assistantPanel.hidden) setAssistantOpen(false);
   });
 
@@ -1603,8 +2184,19 @@ function wireEvents() {
  *  INIT
  *  ========================= */
 (function init(){
+  resetModalState();
   initAssistantAvatars();
   wireEvents();
+  try {
+    const { auth } = ensureFirebaseReady();
+    auth.onAuthStateChanged((user) => {
+      firebaseUser = user || null;
+      firebaseReady = !!user;
+      updateAuthButton();
+    });
+  } catch (err) {
+    console.warn('Firebase no quedó listo al iniciar:', err);
+  }
   renderQuickChips();
   setEditMode(false);
   lockUI();

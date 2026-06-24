@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;800&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="./styles.css?v=20260622" />
+  <link rel="stylesheet" href="./styles.css?v=20260624-whatsapp-download" />
   <link rel="stylesheet" href="./guion.css" />
 </head>
 
@@ -40,6 +40,10 @@
     </div>
 
     <div class="topbar-actions">
+      <button id="btnSignIn" class="btn btn-soft" type="button">
+        Entrar con Google
+      </button>
+
       <button id="btnToggleEdit" class="edit-toggle" type="button" title="Activar o desactivar el modo edición" aria-pressed="false">
         <span class="edit-toggle-text">Modo edición</span>
         <span class="switch" aria-hidden="true"><span class="switch-dot"></span></span>
@@ -128,7 +132,7 @@
       <div class="statusline">
         <span id="statusText" class="muted">Listo.</span>
         <div class="statusline-actions">
-          <button id="btnImport" class="btn btn-soft" type="button" title="Subir los mensajes del respaldo local a la hoja oficial (sin duplicar)">
+          <button id="btnImport" class="btn btn-soft" type="button" title="Subir los mensajes del respaldo local a Firebase (sin duplicar)">
             ⬆ Importar respaldo
           </button>
           <button id="btnReload" class="btn btn-ghost" type="button">↻ Recargar</button>
@@ -184,6 +188,26 @@
         <label for="msgMensaje">Mensaje</label>
         <textarea id="msgMensaje" rows="7" placeholder="Escribe el mensaje aquí…" required></textarea>
         <div class="hint">Tip: usa saltos de línea normales. Se copian tal cual.</div>
+      </div>
+
+      <div class="field audio-field">
+        <label for="msgAudio">Audio / nota de voz</label>
+        <div id="currentAudioBox" class="current-audio" hidden></div>
+        <input id="msgAudio" type="file" accept="audio/*" />
+        <div class="record-box">
+          <div class="record-actions">
+            <button id="btnRecordAudio" class="btn btn-soft" type="button">Grabar nota de voz</button>
+            <button id="btnStopRecordAudio" class="btn btn-ghost" type="button" hidden>Detener</button>
+            <button id="btnDiscardRecording" class="btn btn-ghost" type="button" hidden>Descartar grabación</button>
+          </div>
+          <div id="recordingStatus" class="record-status">También puedes grabar el audio aquí mismo.</div>
+          <audio id="recordingPreview" class="record-preview" controls hidden></audio>
+        </div>
+        <label class="check-row" for="msgRemoveAudio">
+          <input id="msgRemoveAudio" type="checkbox" />
+          Quitar audio actual al guardar
+        </label>
+        <div class="hint">Puedes adjuntar una nota de voz o audio corto. Maximo recomendado: 25 MB.</div>
       </div>
 
       <div class="modal-foot">
@@ -398,8 +422,13 @@
     })();
   </script>
 
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-storage-compat.js"></script>
+  <script src="./firebase-config.js?v=20260624"></script>
   <script src="./project-knowledge.js"></script>
-  <script src="./app.js?v=20260616-enable-disable"></script>
+  <script src="./app.js?v=20260624-whatsapp-download"></script>
   <script src="./guion.js?v=20260616-merge"></script>
 </body>
 </html>
