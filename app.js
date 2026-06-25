@@ -327,7 +327,21 @@ function normalizeIntent(intent, source = 'base') {
   };
 }
 
+// Cache del conocimiento del asistente: es costoso de construir y solo cambia
+// cuando cambian los mensajes cargados o el conocimiento del proyecto.
+let _knowledgeCache = null;
+function invalidateSearchCaches() {
+  _knowledgeCache = null;
+  _haystackCache = new WeakMap();
+}
+
 function buildAssistantKnowledge() {
+  if (_knowledgeCache) return _knowledgeCache;
+  _knowledgeCache = buildAssistantKnowledgeUncached();
+  return _knowledgeCache;
+}
+
+function buildAssistantKnowledgeUncached() {
   const project = getProjectKnowledge();
   const projectIntents = Array.isArray(project.intents) ? project.intents : [];
   const projectSynonyms = Array.isArray(project.synonymGroups) ? project.synonymGroups : [];
@@ -427,7 +441,18 @@ function addRecentMessage(message) {
   renderQuickChips();
 }
 
+// Cache por mensaje del haystack normalizado (evita re-normalizar en cada tecla).
+let _haystackCache = new WeakMap();
 function messageHaystack(m) {
+  if (!m || typeof m !== 'object') return buildHaystack(m || {});
+  const cached = _haystackCache.get(m);
+  if (cached) return cached;
+  const built = buildHaystack(m);
+  _haystackCache.set(m, built);
+  return built;
+}
+
+function buildHaystack(m) {
   const cat = normSearch(m.categoria);
   const short = normSearch(m.atajo);
   const msg = normSearch(m.mensaje);
@@ -435,10 +460,11 @@ function messageHaystack(m) {
   return { cat, short, msg, aliases, all: `${cat} ${short} ${msg} ${aliases}` };
 }
 
-function scoreMatch(haystack, tokens) {
+// `tokens` ya debe venir expandido (expandTokensWithKnowledge) para no rehacer
+// el trabajo por cada mensaje. Acepta tokens crudos como respaldo.
+function scoreMatch(haystack, tokens, preExpanded = false) {
   let score = 0;
-  const knowledge = buildAssistantKnowledge();
-  const expanded = expandTokensWithKnowledge(tokens, knowledge);
+  const expanded = preExpanded ? tokens : expandTokensWithKnowledge(tokens);
   for (const tok of expanded) {
     if (!tok) continue;
     if (!haystack.all.includes(tok)) continue;
@@ -1106,27 +1132,34 @@ function populateCategoryFilter() {
 function applyFilters() {
   const rawQ = searchInput ? searchInput.value : '';
   const tokens = tokenize(rawQ, { removeStopwords: true });
+  // Para INCLUIR un mensaje exigimos que aparezcan todas las palabras escritas
+  // (AND): así el buscador se va afinando a medida que escribes, en vez de
+  // mostrar todo por culpa de los sinónimos. Los sinónimos solo sirven para
+  // ordenar por relevancia.
   const expandedTokens = expandTokensWithKnowledge(tokens);
   const cat = (categorySelect ? categorySelect.value : '').trim();
 
-  filtered = allMessages.filter(m => {
-    const h = messageHaystack(m);
-    const matchesText = expandedTokens.length === 0 ? true : scoreMatch(h, expandedTokens) > 0;
-    const matchesCat = !cat || (m.categoria || '').trim() === cat;
-    return matchesText && matchesCat;
-  });
-
-  if (expandedTokens.length) {
-    filtered.sort((m1, m2) => {
-      const s1 = scoreMatch(messageHaystack(m1), expandedTokens);
-      const s2 = scoreMatch(messageHaystack(m2), expandedTokens);
-      if (s2 !== s1) return s2 - s1;
-      const c = (m1.categoria || '').localeCompare(m2.categoria || '', 'es', { sensitivity: 'base' });
+  if (tokens.length) {
+    // Calcula el score una sola vez por mensaje y reutilízalo al ordenar.
+    const scored = [];
+    for (const m of allMessages) {
+      if (cat && (m.categoria || '').trim() !== cat) continue;
+      const h = messageHaystack(m);
+      if (!tokens.every(tok => h.all.includes(tok))) continue;
+      const score = scoreMatch(h, expandedTokens, true);
+      if (score > 0) scored.push({ m, score });
+    }
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const c = (a.m.categoria || '').localeCompare(b.m.categoria || '', 'es', { sensitivity: 'base' });
       if (c !== 0) return c;
-      return (m1.atajo || '').localeCompare(m2.atajo || '', 'es', { sensitivity: 'base' });
+      return (a.m.atajo || '').localeCompare(b.m.atajo || '', 'es', { sensitivity: 'base' });
     });
+    filtered = scored.map(entry => entry.m);
   } else {
-    filtered.sort(sortMessages);
+    filtered = allMessages
+      .filter(m => !cat || (m.categoria || '').trim() === cat)
+      .sort(sortMessages);
   }
 }
 
@@ -1155,6 +1188,10 @@ function renderEmpty() {
 function render() {
   if (!tbody || !resultCount) return;
   applyFilters();
+  // Fuera de modo edición ocultamos la columna de acciones para no dejar una
+  // franja de 260px en blanco a la derecha de cada fila.
+  const tableEl = tbody.closest('table');
+  if (tableEl) tableEl.classList.toggle('hide-actions', !editMode);
   tbody.innerHTML = '';
   resultCount.textContent = String(filtered.length);
 
@@ -1856,11 +1893,13 @@ async function load() {
         categoria: String(m.categoria || '').trim(),
         atajo: String(m.atajo || '').trim(),
         mensaje: String(m.mensaje || '').trim(),
-        activo: m.activo !== false
+        activo: m.activo !== false,
+        audio: m.audio && m.audio.url ? m.audio : null
       }))
       .filter(m => m.categoria || m.atajo || m.mensaje)
       .sort(sortMessages);
 
+    invalidateSearchCaches();
     populateCategoryFilter();
     renderQuickChips();
     render();

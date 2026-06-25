@@ -755,8 +755,13 @@ textarea{ font:inherit; }
 .col-short{ width:150px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .col-actions{ width:260px; text-align:right; }
 
+/* Fuera de modo edición la columna de acciones se oculta para que el mensaje
+   ocupe todo el ancho y no quede un recuadro vacío a la derecha. */
+.table.hide-actions .col-actions{ display:none; }
+.table.hide-actions{ min-width:760px; }
+
 .message-text{
-  max-width:820px;
+  max-width:1100px;
 }
 
 .message-audio,
