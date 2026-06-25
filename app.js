@@ -60,7 +60,6 @@ const tbody            = $('#messageTableBody');
 const statusText       = $('#statusText');
 const btnReload        = $('#btnReload');
 const btnNew           = $('#btnNew');
-const btnImport        = $('#btnImport');
 const btnSignIn        = $('#btnSignIn');
 const btnToggleEdit    = $('#btnToggleEdit');
 const editStateBadge   = $('#editState');
@@ -480,7 +479,6 @@ function scoreMatch(haystack, tokens, preExpanded = false) {
 
 function lockUI() {
   setDisabled(btnReload, isLoading || isSaving);
-  setDisabled(btnImport, isLoading || isSaving);
   setDisabled(btnSignIn, isLoading || isSaving);
   setDisabled(btnNew, isLoading || isSaving);
   setDisabled(btnToggleEdit, isLoading || isSaving);
@@ -785,68 +783,6 @@ async function apiPost(action, payload) {
       updatedBy: firebaseUser ? firebaseUser.email : ''
     });
     return { id, audio: payload && payload.audio ? payload.audio : null };
-  }
-
-  if (action === 'import') {
-    const items = Array.isArray(payload && payload.messages) ? payload.messages : [];
-    if (!items.length) throw new Error('No se enviaron mensajes para importar.');
-
-    let imported = 0;
-    let skipped = 0;
-    let batch = firebaseDb.batch();
-    let batchCount = 0;
-
-    for (const item of items) {
-      const data = cleanMessagePayload(item);
-      if (!data.categoria || !data.atajo || !data.mensaje) {
-        skipped++;
-        continue;
-      }
-
-      const duplicate = await findDuplicateDoc(data.categoria, data.atajo);
-      if (duplicate) {
-        skipped++;
-        continue;
-      }
-
-      const ref = String(item.id || '').trim()
-        ? messagesCollection().doc(String(item.id).trim())
-        : messagesCollection().doc();
-
-      if (String(item.id || '').trim()) {
-        const existingDoc = await ref.get();
-        if (existingDoc.exists) {
-          skipped++;
-          continue;
-        }
-      }
-
-      batch.set(ref, {
-        categoria: data.categoria,
-        atajo: data.atajo,
-        mensaje: data.mensaje,
-        key: `${normSearch(data.categoria)}||${normSearch(data.atajo)}`,
-        tipo: 'texto',
-        activo: item.activo === false ? false : true,
-        archivado: false,
-        createdAt: now,
-        updatedAt: now,
-        createdBy: firebaseUser ? firebaseUser.email : '',
-        updatedBy: firebaseUser ? firebaseUser.email : '',
-        importedFrom: 'messages-backup.json'
-      }, { merge: true });
-      imported++;
-      batchCount++;
-
-      if (batchCount >= 450) {
-        await batch.commit();
-        batch = firebaseDb.batch();
-        batchCount = 0;
-      }
-    }
-
-    if (batchCount) await batch.commit();
-    return { imported, skipped, total: items.length };
   }
 
   throw new Error('Acción no soportada: ' + action);
@@ -1906,7 +1842,7 @@ async function load() {
     if (assistantResults && assistantResults.children.length) askAssistant();
 
     if (fromBackup) {
-      setStatus(`Mostrando ${allMessages.length} mensajes desde el respaldo local (solo lectura). Usa "Importar respaldo" para subirlos a Firebase.`);
+      setStatus(`Mostrando ${allMessages.length} mensajes desde el respaldo local (solo lectura). Inicia sesión con Google para editar desde Firebase.`);
       setAssistantMeta(`Respaldo local: ${allMessages.length} mensajes (solo lectura).`);
     } else {
       setStatus(`Cargado: ${allMessages.length} mensajes desde Firebase.`);
@@ -1929,44 +1865,8 @@ async function load() {
  */
 function requireEditableSource() {
   if (editableSource) return true;
-  toast('Estás viendo el respaldo local (solo lectura). Usa "Importar respaldo" para subirlo a Firebase.', 'warn');
+  toast('Estás viendo el respaldo local (solo lectura). Inicia sesión con Google para editar desde Firebase.', 'warn');
   return false;
-}
-
-async function importBackupToSheet() {
-  if (isSaving || isLoading) return;
-
-  const backup = await loadBackupMessages().catch(() => []);
-  if (!backup.length) {
-    toast('No hay respaldo local para importar.', 'warn');
-    return;
-  }
-
-  const ok = confirm(
-    `¿Importar ${backup.length} mensajes del respaldo a Firebase?\n\n` +
-    'No se crean duplicados: se omiten los que ya existen (por ID o por categoría + atajo).'
-  );
-  if (!ok) return;
-
-  isSaving = true;
-  lockUI();
-  setStatus('Importando a Firebase…');
-
-  try {
-    const res = await apiPost('import', { messages: backup });
-    const imported = (res && res.imported) || 0;
-    const skipped = (res && res.skipped) || 0;
-    toast(`Importados: ${imported} · Omitidos: ${skipped}`, 'ok');
-    isSaving = false;
-    await load();
-  } catch (err) {
-    console.error(err);
-    setStatus('Error importando.');
-    toast(String(err.message || err), 'bad');
-  } finally {
-    isSaving = false;
-    lockUI();
-  }
 }
 
 async function saveFromModal() {
@@ -2158,8 +2058,6 @@ function wireEvents() {
       }
     });
   }
-
-  if (btnImport) btnImport.addEventListener('click', () => importBackupToSheet());
 
   if (btnRecordAudio) btnRecordAudio.addEventListener('click', startAudioRecording);
   if (btnStopRecordAudio) btnStopRecordAudio.addEventListener('click', stopAudioRecording);

@@ -10,14 +10,13 @@ Herramienta web para consultar, copiar y administrar respuestas predeterminadas 
 - Firebase Storage guarda audios/notas de voz en `respuestas-predeterminadas-audios/`.
 - El modal permite subir un archivo de audio o grabar una nota de voz desde la app.
 - Los audios se muestran con reproductor y botón `Descargar para WhatsApp` para adjuntarlos en WhatsApp Web.
-- `messages-backup.json` queda como respaldo local de solo lectura e importación inicial.
-- `Code.gs` queda solo como referencia histórica del backend anterior en Apps Script.
+- `messages-backup.json` queda como respaldo local de solo lectura (se muestra si Firebase no responde).
 
 ## Archivos principales
 
 - `index.html`: estructura de la app y carga de Firebase.
 - `firebase-config.js`: configuración web del proyecto Firebase.
-- `app.js`: frontend, búsqueda, CRUD, importación y MusiAsistente local.
+- `app.js`: frontend, búsqueda, CRUD y MusiAsistente local.
 - `guion.js`: guion de ventas y notas locales.
 - `firestore.rules`: reglas de Firestore para el proyecto compartido.
 - `storage.rules`: reglas para audios/notas de voz de respuestas predeterminadas.
@@ -39,7 +38,7 @@ No modifica las colecciones existentes del proyecto `musiasistente`:
 Con las reglas incluidas:
 
 - Todo el equipo autorizado puede leer respuestas.
-- Solo Alek y Cata pueden crear, editar, archivar o importar respuestas.
+- Solo Alek y Cata pueden crear, editar o archivar respuestas.
 - Los audios viven en Storage bajo `respuestas-predeterminadas-audios/`.
 
 ## Publicación
