@@ -2,41 +2,34 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Correos autorizados a entrar
-    function autorizado() {
-      return request.auth != null && request.auth.token.email in [
-        'alekcaballeromusic@gmail.com',
-        'catalina.medina.leal@gmail.com',
-        'musicalaasesor@gmail.com',
-        'imusicala@gmail.com'
-      ];
-    }
-
-    // Solo Alek y Cata pueden editar
-    function admin() {
+    // Solo Alek y Cata administran las demás colecciones del proyecto.
+    function adminGeneral() {
       return request.auth != null && request.auth.token.email in [
         'alekcaballeromusic@gmail.com',
         'catalina.medina.leal@gmail.com'
       ];
     }
 
-    // Conocimiento: todo el equipo lee, solo admins escriben
+    // Estos cuatro correos administran exclusivamente los mensajes predeterminados.
+    function editorMensajes() {
+      return request.auth != null && request.auth.token.email in [
+        'alekcaballeromusic@gmail.com',
+        'catalina.medina.leal@gmail.com',
+        'musicalaasesor@gmail.com',
+        'adminmusicala@gmail.com'
+      ];
+    }
+
     match /conocimiento/{doc} {
-      allow read: if autorizado();
-      allow write: if admin();
+      allow read, write: if adminGeneral();
     }
 
-    // Pendientes: todo el equipo puede crear, solo admins gestionan/leen
     match /pendientes/{doc} {
-      allow create: if autorizado();
-      allow read, update, delete: if admin();
+      allow read, write: if adminGeneral();
     }
 
-    // Respuestas predeterminadas: colección aislada para esta herramienta.
-    // Todo el equipo puede consultar; solo admins crean, editan, archivan e importan.
     match /respuestasPredeterminadas/{doc} {
-      allow read: if autorizado();
-      allow create, update, delete: if admin();
+      allow read, create, update, delete: if editorMensajes();
     }
   }
 }

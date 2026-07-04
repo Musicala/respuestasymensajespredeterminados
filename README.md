@@ -37,8 +37,8 @@ No modifica las colecciones existentes del proyecto `musiasistente`:
 
 Con las reglas incluidas:
 
-- Todo el equipo autorizado puede leer respuestas.
-- Solo Alek y Cata pueden crear, editar o archivar respuestas.
+- Alek, Cata, Musicala Asesor y Admin Musicala pueden leer, crear, editar y archivar respuestas.
+- Solo Alek y Cata conservan acceso a las demÃ¡s colecciones del proyecto.
 - Los audios viven en Storage bajo `respuestas-predeterminadas-audios/`.
 
 ## Publicación
