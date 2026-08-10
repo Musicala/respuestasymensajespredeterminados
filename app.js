@@ -35,6 +35,8 @@ let modalMode = 'create';
 // true cuando los datos vienen de Firebase (editable).
 // false cuando se muestra el respaldo local (solo lectura).
 let editableSource = false;
+// Último error real de lectura de Firebase, para poder explicar el bloqueo.
+let firebaseLoadError = null;
 let firebaseApp = null;
 let firebaseAuth = null;
 let firebaseDb = null;
@@ -61,6 +63,7 @@ const statusText       = $('#statusText');
 const btnReload        = $('#btnReload');
 const btnNew           = $('#btnNew');
 const btnSignIn        = $('#btnSignIn');
+const btnSignOut       = $('#btnSignOut');
 const btnToggleEdit    = $('#btnToggleEdit');
 const editStateBadge   = $('#editState');
 const toastEl          = $('#toast');
@@ -480,6 +483,7 @@ function scoreMatch(haystack, tokens, preExpanded = false) {
 function lockUI() {
   setDisabled(btnReload, isLoading || isSaving);
   setDisabled(btnSignIn, isLoading || isSaving);
+  setDisabled(btnSignOut, isLoading || isSaving);
   setDisabled(btnNew, isLoading || isSaving);
   setDisabled(btnToggleEdit, isLoading || isSaving);
   setDisabled(btnAskAssistant, isLoading || isSaving);
@@ -535,6 +539,16 @@ function ensureFirebaseReady() {
     firebaseAuth = window.firebase.auth();
     firebaseDb = window.firebase.firestore();
     firebaseStorage = window.firebase.storage();
+
+    // Sesión persistente entre recargas y pestañas. Sin esto, algunos
+    // navegadores (Edge/Safari con cookies de terceros restringidas)
+    // pierden la sesión al recargar y la app cae a solo lectura.
+    try {
+      firebaseAuth.setPersistence(window.firebase.auth.Auth.Persistence.LOCAL)
+        .catch((err) => console.warn('No se pudo fijar la persistencia de sesión:', err));
+    } catch (err) {
+      console.warn('No se pudo fijar la persistencia de sesión:', err);
+    }
   }
 
   return { auth: firebaseAuth, db: firebaseDb, storage: firebaseStorage };
@@ -564,14 +578,33 @@ async function fetchJson(url, options = {}) {
 }
 
 function updateAuthButton() {
-  if (!btnSignIn) return;
-  if (firebaseUser && firebaseUser.email) {
-    btnSignIn.textContent = firebaseUser.email;
-    btnSignIn.title = 'Sesión iniciada en Firebase';
-    return;
+  const signedIn = !!(firebaseUser && firebaseUser.email);
+
+  if (btnSignIn) {
+    if (signedIn) {
+      btnSignIn.textContent = firebaseUser.email;
+      btnSignIn.title = editableSource
+        ? 'Sesión iniciada. Puedes editar los mensajes.'
+        : 'Sesión iniciada, pero este correo no tiene permiso de edición.';
+      btnSignIn.classList.toggle('is-signed-in', true);
+    } else {
+      btnSignIn.textContent = 'Entrar con Google';
+      btnSignIn.title = 'Iniciar sesión para editar desde Firebase';
+      btnSignIn.classList.toggle('is-signed-in', false);
+    }
   }
-  btnSignIn.textContent = 'Entrar con Google';
-  btnSignIn.title = 'Iniciar sesión para editar desde Firebase';
+
+  if (btnSignOut) btnSignOut.hidden = !signedIn;
+}
+
+/** Cierra sesión y vuelve a cargar para que la vista refleje el estado real. */
+async function signOutFromFirebase() {
+  const { auth } = ensureFirebaseReady();
+  await auth.signOut();
+  firebaseUser = null;
+  firebaseReady = false;
+  updateAuthButton();
+  toast('Sesión cerrada.', 'ok');
 }
 
 async function signInToFirebaseIfNeeded({ interactive = false } = {}) {
@@ -604,7 +637,26 @@ async function signInToFirebaseIfNeeded({ interactive = false } = {}) {
 
   const provider = new window.firebase.auth.GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
-  const result = await auth.signInWithPopup(provider);
+
+  let result;
+  try {
+    result = await auth.signInWithPopup(provider);
+  } catch (err) {
+    const code = String(err && err.code || '');
+    // Si el navegador bloquea la ventana emergente, seguimos por redirección.
+    const popupFallo = code === 'auth/popup-blocked'
+      || code === 'auth/popup-closed-by-user'
+      || code === 'auth/cancelled-popup-request'
+      || code === 'auth/operation-not-supported-in-this-environment';
+    if (!popupFallo) throw err;
+    if (code === 'auth/popup-closed-by-user') {
+      throw new Error('Cerraste la ventana de Google antes de terminar. Intenta de nuevo.');
+    }
+    await auth.signInWithRedirect(provider);
+    // La página se recarga; el resultado se recoge con getRedirectResult al iniciar.
+    return null;
+  }
+
   firebaseUser = result.user;
   firebaseReady = true;
   updateAuthButton();
@@ -1218,6 +1270,8 @@ function render() {
       btnEdit.className = 'btn btn-ghost btn-compact';
       btnEdit.textContent = 'Editar';
       btnEdit.addEventListener('click', () => {
+        // Avisamos antes de que escriban, no después de perder el trabajo.
+        if (!requireEditableSource()) return;
         if (!m.id) {
           toast('Este mensaje no tiene ID. Revisa Firebase o recarga la fuente.', 'bad');
           return;
@@ -1814,9 +1868,11 @@ async function load() {
     try {
       messages = await apiGetList();
       editableSource = true;
+      firebaseLoadError = null;
     } catch (err) {
       console.error('No se pudo leer Firebase:', err);
       firebaseError = err;
+      firebaseLoadError = err;
       editableSource = false;
     }
 
@@ -1850,9 +1906,10 @@ async function load() {
     render();
     if (assistantResults && assistantResults.children.length) askAssistant();
 
+    updateAuthButton();
+
     if (fromBackup) {
-      const detalle = firebaseError ? ` Motivo: ${firebaseError.message || firebaseError}` : '';
-      setStatus(`Mostrando ${allMessages.length} mensajes desde el respaldo local (solo lectura). Inicia sesión con Google para editar desde Firebase.${detalle}`);
+      setStatus(`${allMessages.length} mensajes en pantalla. ${readOnlyReason()}`);
       setAssistantMeta(`Respaldo local: ${allMessages.length} mensajes (solo lectura).`);
     } else {
       setStatus(`Cargado: ${allMessages.length} mensajes desde Firebase.`);
@@ -1873,9 +1930,21 @@ async function load() {
  * Bloquea cualquier escritura cuando lo que se muestra es el respaldo local.
  * Evita el error "No se encontró el mensaje con ese ID" por IDs que no están en Firebase.
  */
+function readOnlyReason() {
+  const code = String(firebaseLoadError && firebaseLoadError.code || '');
+  if (!firebaseUser) {
+    return 'Estás viendo el respaldo local (solo lectura). Inicia sesión con Google para editar.';
+  }
+  if (code === 'permission-denied') {
+    return `Tu cuenta (${firebaseUser.email}) no tiene permiso de edición sobre los mensajes. Pide que la agreguen a la lista de editores.`;
+  }
+  const detalle = firebaseLoadError ? ` (${firebaseLoadError.message || firebaseLoadError})` : '';
+  return `No se pudo conectar con Firebase, así que estás en solo lectura${detalle}. Usa Recargar para reintentar.`;
+}
+
 function requireEditableSource() {
   if (editableSource) return true;
-  toast('Estás viendo el respaldo local (solo lectura). Inicia sesión con Google para editar desde Firebase.', 'warn');
+  toast(readOnlyReason(), 'warn');
   return false;
 }
 
@@ -2059,11 +2128,25 @@ function wireEvents() {
       if (isLoading || isSaving) return;
       try {
         setStatus('Conectando con Firebase…');
-        await signInToFirebaseIfNeeded({ interactive: true });
-        await load();
+        const user = await signInToFirebaseIfNeeded({ interactive: true });
+        // Con redirección devuelve null y la página se recarga sola.
+        if (user) await load();
       } catch (err) {
         console.error(err);
         setStatus('No se pudo iniciar sesión.');
+        toast(String(err.message || err), 'bad');
+      }
+    });
+  }
+
+  if (btnSignOut) {
+    btnSignOut.addEventListener('click', async () => {
+      if (isLoading || isSaving) return;
+      try {
+        await signOutFromFirebase();
+        await load();
+      } catch (err) {
+        console.error(err);
         toast(String(err.message || err), 'bad');
       }
     });
@@ -2081,6 +2164,7 @@ function wireEvents() {
   if (btnNew) {
     btnNew.addEventListener('click', () => {
       if (isLoading || isSaving) return;
+      if (!requireEditableSource()) return;
       if (!editMode) setEditMode(true);
       openModal('create');
     });
@@ -2134,18 +2218,42 @@ function wireEvents() {
   resetModalState();
   initAssistantAvatars();
   wireEvents();
-  try {
-    const { auth } = ensureFirebaseReady();
-    auth.onAuthStateChanged((user) => {
-      firebaseUser = user || null;
-      firebaseReady = !!user;
-      updateAuthButton();
-    });
-  } catch (err) {
-    console.warn('Firebase no quedó listo al iniciar:', err);
-  }
   renderQuickChips();
   setEditMode(false);
   lockUI();
-  load();
+
+  let authArrancado = false;
+  let ultimoUid = null;
+
+  try {
+    const { auth } = ensureFirebaseReady();
+
+    // Si el inicio de sesión se hizo por redirección, recogemos el resultado.
+    auth.getRedirectResult().catch((err) => {
+      console.warn('No se pudo completar el inicio de sesión por redirección:', err);
+    });
+
+    // Una sola fuente de verdad: cada cambio de sesión recarga los datos.
+    auth.onAuthStateChanged((user) => {
+      firebaseUser = user || null;
+      firebaseReady = !!user;
+      const uid = user ? user.uid : null;
+      updateAuthButton();
+
+      if (!authArrancado) {
+        authArrancado = true;
+        ultimoUid = uid;
+        load();
+        return;
+      }
+      if (uid !== ultimoUid) {
+        ultimoUid = uid;
+        load();
+      }
+    });
+  } catch (err) {
+    console.warn('Firebase no quedó listo al iniciar:', err);
+    authArrancado = true;
+    load();
+  }
 })();
