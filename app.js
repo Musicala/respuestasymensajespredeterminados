@@ -1936,7 +1936,9 @@ function readOnlyReason() {
     return 'Estás viendo el respaldo local (solo lectura). Inicia sesión con Google para editar.';
   }
   if (code === 'permission-denied') {
-    return `Tu cuenta (${firebaseUser.email}) no tiene permiso de edición sobre los mensajes. Pide que la agreguen a la lista de editores.`;
+    // Ojo: esto no es "no puede editar", es que Firestore niega hasta la
+    // lectura. Lo que se ve en pantalla es un respaldo viejo y congelado.
+    return `Firebase está negando el acceso a ${firebaseUser.email}, así que esto es una copia antigua: puede faltar lo nuevo y reaparecer lo archivado. No edites desde aquí; avisa para revisar los permisos.`;
   }
   const detalle = firebaseLoadError ? ` (${firebaseLoadError.message || firebaseLoadError})` : '';
   return `No se pudo conectar con Firebase, así que estás en solo lectura${detalle}. Usa Recargar para reintentar.`;

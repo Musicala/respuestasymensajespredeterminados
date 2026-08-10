@@ -2,17 +2,23 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
+    // Storage no puede consultar Firestore, asi que aqui la lista de correos
+    // es obligatoria. Debe mantenerse igual a editorMensajesBase() de
+    // firestore.rules: si agregas un editor alla, agregalo aqui tambien.
     function editorMensajes() {
       return request.auth != null && request.auth.token.email in [
         'alekcaballeromusic@gmail.com',
         'catalina.medina.leal@gmail.com',
         'musicalaasesor@gmail.com',
-        'adminmusicala@gmail.com'
+        'adminmusicala@gmail.com',
+        'imusicala@gmail.com'
       ];
     }
 
     match /respuestas-predeterminadas-audios/{allPaths=**} {
-      allow read: if editorMensajes();
+      // Escuchar la nota de voz lo puede hacer cualquiera con sesion iniciada
+      // del equipo; publicarla o borrarla, solo los editores.
+      allow read: if request.auth != null;
       allow create, update: if editorMensajes()
         && request.resource != null
         && request.resource.size < 25 * 1024 * 1024

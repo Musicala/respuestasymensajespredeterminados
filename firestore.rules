@@ -2,34 +2,163 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Solo Alek y Cata administran las demás colecciones del proyecto.
-    function adminGeneral() {
-      return request.auth != null && request.auth.token.email in [
+    // ---------------------------------------------------------------------
+    // Quien es quien
+    // ---------------------------------------------------------------------
+    // La fuente de verdad es la coleccion `usuarios` (se administra desde el
+    // panel, sin volver a publicar reglas). La lista de abajo queda como
+    // respaldo de arranque para no quedarse nunca por fuera: si `usuarios`
+    // esta vacia o se borra por error, Alek y Cata siguen entrando.
+
+    function correo() { return request.auth != null ? request.auth.token.email : ''; }
+
+    function perfil() {
+      return get(/databases/$(database)/documents/usuarios/$(correo())).data;
+    }
+
+    function tienePerfil() {
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/usuarios/$(correo()));
+    }
+
+    function enListaBase() {
+      return correo() in [
+        'alekcaballeromusic@gmail.com',
+        'catalina.medina.leal@gmail.com',
+        'musicalaasesor@gmail.com',
+        'imusicala@gmail.com'
+      ];
+    }
+
+    function adminBase() {
+      return correo() in [
         'alekcaballeromusic@gmail.com',
         'catalina.medina.leal@gmail.com'
       ];
     }
 
-    // Estos cuatro correos administran exclusivamente los mensajes predeterminados.
-    function editorMensajes() {
-      return request.auth != null && request.auth.token.email in [
+    // Puede entrar: tiene perfil activo, o esta en la lista de respaldo.
+    function autorizado() {
+      return request.auth != null && (
+        (tienePerfil() && perfil().activo != false) ||
+        enListaBase()
+      );
+    }
+
+    // Puede editar el conocimiento y gestionar el equipo.
+    function admin() {
+      return request.auth != null && (
+        (tienePerfil() && perfil().activo != false && perfil().admin == true) ||
+        adminBase()
+      );
+    }
+
+    // Puede editar los mensajes predeterminados. Es un permiso aparte del de
+    // admin: se concede desde el panel con el campo `mensajes: true` en el
+    // perfil, y la lista de abajo es el respaldo si `usuarios` falla.
+    function editorMensajesBase() {
+      return correo() in [
         'alekcaballeromusic@gmail.com',
         'catalina.medina.leal@gmail.com',
         'musicalaasesor@gmail.com',
-        'adminmusicala@gmail.com'
+        'adminmusicala@gmail.com',
+        'imusicala@gmail.com'
       ];
     }
 
+    function editorMensajes() {
+      return admin() || (request.auth != null && (
+        (tienePerfil() && perfil().activo != false && perfil().mensajes == true) ||
+        editorMensajesBase()
+      ));
+    }
+
+    // ---------------------------------------------------------------------
+    // Ayudas de validacion
+    // ---------------------------------------------------------------------
+    // Regla general: nadie puede crear un documento a nombre de otra persona.
+    function esMio(rec) { return rec.usuario == correo(); }
+    function esPropio(rec) { return request.auth != null && rec.usuario == correo(); }
+
+    function textoCorto(v) { return v is string && v.size() <= 2000; }
+
+    // ---------------------------------------------------------------------
+    // Colecciones
+    // ---------------------------------------------------------------------
+
+    // Equipo: cada quien lee su propio perfil (asi la app resuelve su rol al
+    // entrar); solo los admins ven la lista completa y dan de alta o de baja.
+    match /usuarios/{email} {
+      allow get: if request.auth != null && (email == correo() || admin());
+      allow list: if admin();
+      allow write: if admin();
+    }
+
+    // Conocimiento: todo el equipo lee, solo admins escriben.
     match /conocimiento/{doc} {
-      allow read, write: if adminGeneral();
+      allow read: if autorizado();
+      allow write: if admin();
     }
 
+    // Pendientes: todo el equipo crea (a su nombre); admins gestionan.
     match /pendientes/{doc} {
-      allow read, write: if adminGeneral();
+      allow create: if autorizado()
+                    && esMio(request.resource.data)
+                    && textoCorto(request.resource.data.pregunta);
+      allow read: if admin() || esPropio(resource.data);
+      allow update, delete: if admin();
     }
 
+    // Feedback de respuestas: igual que pendientes.
+    match /feedback_respuestas/{doc} {
+      allow create: if autorizado()
+                    && esMio(request.resource.data)
+                    && textoCorto(request.resource.data.pregunta)
+                    && textoCorto(request.resource.data.observacion_usuario)
+                    && textoCorto(request.resource.data.respuesta_sugerida);
+      allow read: if admin() || esPropio(resource.data);
+      allow update, delete: if admin();
+    }
+
+    // Consultas (trazabilidad): todo el equipo registra la suya, solo admins leen.
+    // El update se permite solo para marcar la accion del usuario sobre SU consulta
+    // (util / no_era / falta_info / proponer), sin poder tocar nada mas.
+    match /consultas/{doc} {
+      allow create: if autorizado()
+                    && esMio(request.resource.data)
+                    && textoCorto(request.resource.data.pregunta);
+      allow update: if (esPropio(resource.data)
+                        && request.resource.data.diff(resource.data)
+                             .affectedKeys().hasOnly(['accion_usuario']))
+                    || admin();
+      allow read, delete: if admin();
+    }
+
+    // Sinonimos: todo el equipo lee, solo admins escriben.
+    match /sinonimos/{doc} {
+      allow read: if autorizado();
+      allow write: if admin();
+    }
+
+    // Certificados: todo el equipo crea solicitudes y hace seguimiento de LAS
+    // SUYAS (antes quedaban ciegos despues de pedirlo). Los admins ven todo y
+    // son los unicos que cambian el estado.
+    match /certificados/{doc} {
+      allow create: if autorizado()
+                    && esMio(request.resource.data)
+                    && request.resource.data.estado == 'pendiente'
+                    && textoCorto(request.resource.data.solicitante)
+                    && textoCorto(request.resource.data.observaciones);
+      allow read: if admin() || esPropio(resource.data);
+      allow update, delete: if admin();
+    }
+
+    // Mensajes predeterminados: todo el equipo autorizado los lee (si no,
+    // la herramienta cae al respaldo local y queda en solo lectura); solo los
+    // editores de mensajes crean, corrigen o archivan.
     match /respuestasPredeterminadas/{doc} {
-      allow read, create, update, delete: if editorMensajes();
+      allow read: if autorizado();
+      allow create, update, delete: if editorMensajes();
     }
   }
 }
