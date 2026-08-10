@@ -663,26 +663,32 @@ function firebaseMessageFromDoc(doc) {
 async function findDuplicateDoc(categoria, atajo, excludeId = '') {
   const wantedCat = normSearch(categoria);
   const wantedAtajo = normSearch(atajo);
+  // Sin filtro de 'archivado' en el servidor: los documentos antiguos no tienen
+  // ese campo y Firestore los excluiría de la consulta.
   const snap = await messagesCollection()
-    .where('archivado', '==', false)
     .where('key', '==', `${wantedCat}||${wantedAtajo}`)
-    .limit(5)
+    .limit(10)
     .get();
 
   let duplicate = null;
   snap.forEach((doc) => {
-    if (!duplicate && doc.id !== excludeId) duplicate = doc;
+    if (duplicate || doc.id === excludeId) return;
+    if ((doc.data() || {}).archivado === true) return;
+    duplicate = doc;
   });
   return duplicate;
 }
 
 async function apiGetList() {
   await signInToFirebaseIfNeeded({ interactive: false });
-  const snap = await messagesCollection()
-    .where('archivado', '==', false)
-    .get();
+  // Traemos todo y filtramos aquí: los documentos sin campo 'archivado'
+  // (los importados antes de que existiera) no aparecen en un where del servidor.
+  const snap = await messagesCollection().get();
   const messages = [];
-  snap.forEach((doc) => messages.push(firebaseMessageFromDoc(doc)));
+  snap.forEach((doc) => {
+    const msg = firebaseMessageFromDoc(doc);
+    if (!msg.archivado) messages.push(msg);
+  });
   return messages;
 }
 
@@ -1802,6 +1808,7 @@ async function load() {
   try {
     let messages = [];
     let fromBackup = false;
+    let firebaseError = null;
 
     // 1) Firebase es la única fuente editable.
     try {
@@ -1809,11 +1816,13 @@ async function load() {
       editableSource = true;
     } catch (err) {
       console.error('No se pudo leer Firebase:', err);
+      firebaseError = err;
       editableSource = false;
     }
 
-    // 2) Si Firebase está vacío o no respondió, usamos el respaldo SOLO para lectura.
-    if (!messages.length) {
+    // 2) Solo si Firebase NO respondió usamos el respaldo (lectura).
+    //    Si respondió y está vacío, seguimos en modo editable para poder crear.
+    if (firebaseError) {
       const backup = await loadBackupMessages().catch(() => []);
       if (backup.length) {
         messages = backup;
@@ -1842,7 +1851,8 @@ async function load() {
     if (assistantResults && assistantResults.children.length) askAssistant();
 
     if (fromBackup) {
-      setStatus(`Mostrando ${allMessages.length} mensajes desde el respaldo local (solo lectura). Inicia sesión con Google para editar desde Firebase.`);
+      const detalle = firebaseError ? ` Motivo: ${firebaseError.message || firebaseError}` : '';
+      setStatus(`Mostrando ${allMessages.length} mensajes desde el respaldo local (solo lectura). Inicia sesión con Google para editar desde Firebase.${detalle}`);
       setAssistantMeta(`Respaldo local: ${allMessages.length} mensajes (solo lectura).`);
     } else {
       setStatus(`Cargado: ${allMessages.length} mensajes desde Firebase.`);
