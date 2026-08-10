@@ -10,7 +10,10 @@ Herramienta web para consultar, copiar y administrar respuestas predeterminadas 
 - Firebase Storage guarda audios/notas de voz en `respuestas-predeterminadas-audios/`.
 - El modal permite subir un archivo de audio o grabar una nota de voz desde la app.
 - Los audios se muestran con reproductor y botón `Descargar para WhatsApp` para adjuntarlos en WhatsApp Web.
-- `messages-backup.json` queda como respaldo local de solo lectura (se muestra si Firebase no responde).
+- Firebase es la unica fuente de datos: no hay respaldo local. Si Firestore no
+  responde o niega el acceso, la tabla queda vacia y se explica el motivo. Es
+  deliberado: mostrar una copia vieja hizo que se reeditaran mensajes ya
+  archivados y que faltaran los nuevos.
 
 ## Archivos principales
 

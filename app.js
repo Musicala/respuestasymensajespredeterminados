@@ -13,8 +13,6 @@
 /** =========================
  *  CONFIG
  *  ========================= */
-const BACKUP_MESSAGES_URL = './messages-backup.json';
-const HTTP_TIMEOUT_MS = 15000;
 const FIREBASE_MESSAGES_COLLECTION = (window.MUSICALA_MESSAGES_FIREBASE && window.MUSICALA_MESSAGES_FIREBASE.collection) || 'respuestasPredeterminadas';
 const FIREBASE_AUDIO_STORAGE_PATH = (window.MUSICALA_MESSAGES_FIREBASE && window.MUSICALA_MESSAGES_FIREBASE.audioStoragePath) || 'respuestas-predeterminadas-audios';
 const MAX_AUDIO_SIZE_BYTES = 25 * 1024 * 1024;
@@ -32,8 +30,7 @@ let editMode = false;
 let isLoading = false;
 let isSaving = false;
 let modalMode = 'create';
-// true cuando los datos vienen de Firebase (editable).
-// false cuando se muestra el respaldo local (solo lectura).
+// true solo cuando Firebase respondió y los datos en pantalla son los reales.
 let editableSource = false;
 // Último error real de lectura de Firebase, para poder explicar el bloqueo.
 let firebaseLoadError = null;
@@ -554,29 +551,6 @@ function ensureFirebaseReady() {
   return { auth: firebaseAuth, db: firebaseDb, storage: firebaseStorage };
 }
 
-async function fetchJson(url, options = {}) {
-  const controller = new AbortController();
-  const to = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
-    const data = await res.json().catch(() => null);
-
-    if (!res.ok) {
-      const msg = (data && data.error) ? data.error : `HTTP ${res.status}`;
-      throw new Error(msg);
-    }
-    return data;
-  } catch (err) {
-    const msg = (err && err.name === 'AbortError')
-      ? `Se demoró mucho (>${Math.round(HTTP_TIMEOUT_MS/1000)}s). Intenta de nuevo.`
-      : String(err && err.message ? err.message : err);
-    throw new Error(msg);
-  } finally {
-    clearTimeout(to);
-  }
-}
-
 function updateAuthButton() {
   const signedIn = !!(firebaseUser && firebaseUser.email);
 
@@ -742,14 +716,6 @@ async function apiGetList() {
     if (!msg.archivado) messages.push(msg);
   });
   return messages;
-}
-
-async function loadBackupMessages() {
-  const data = await fetchJson(BACKUP_MESSAGES_URL, { method: 'GET' });
-  if (!Array.isArray(data)) {
-    throw new Error('El respaldo local de mensajes no tiene un formato valido.');
-  }
-  return data;
 }
 
 async function apiPost(action, payload) {
@@ -1172,7 +1138,11 @@ function renderEmpty() {
 
   const span = document.createElement('span');
   span.style.color = '#6B7280';
-  span.textContent = 'No hay resultados. Prueba otra búsqueda o categoría.';
+  // Sin datos y sin conexión no es lo mismo que "no hay resultados":
+  // decirlo mal fue justo lo que hizo que se editara sobre una copia vieja.
+  span.textContent = (!editableSource && !allMessages.length)
+    ? `No se están mostrando mensajes. ${readOnlyReason()}`
+    : 'No hay resultados. Prueba otra búsqueda o categoría.';
   td.appendChild(span);
 
   tr.appendChild(td);
@@ -1861,30 +1831,18 @@ async function load() {
 
   try {
     let messages = [];
-    let fromBackup = false;
-    let firebaseError = null;
 
-    // 1) Firebase es la única fuente editable.
+    // Firebase es la única fuente. Si no responde no mostramos nada: es
+    // preferible una pantalla vacía a una copia vieja que parece la verdad.
     try {
       messages = await apiGetList();
       editableSource = true;
       firebaseLoadError = null;
     } catch (err) {
       console.error('No se pudo leer Firebase:', err);
-      firebaseError = err;
       firebaseLoadError = err;
       editableSource = false;
-    }
-
-    // 2) Solo si Firebase NO respondió usamos el respaldo (lectura).
-    //    Si respondió y está vacío, seguimos en modo editable para poder crear.
-    if (firebaseError) {
-      const backup = await loadBackupMessages().catch(() => []);
-      if (backup.length) {
-        messages = backup;
-        fromBackup = true;
-        editableSource = false;
-      }
+      messages = [];
     }
 
     allMessages = messages
@@ -1908,9 +1866,9 @@ async function load() {
 
     updateAuthButton();
 
-    if (fromBackup) {
-      setStatus(`${allMessages.length} mensajes en pantalla. ${readOnlyReason()}`);
-      setAssistantMeta(`Respaldo local: ${allMessages.length} mensajes (solo lectura).`);
+    if (!editableSource) {
+      setStatus(`Sin conexión con la base. ${readOnlyReason()}`);
+      setAssistantMeta('Sin conexión con la base: no puedo recomendar mensajes.');
     } else {
       setStatus(`Cargado: ${allMessages.length} mensajes desde Firebase.`);
       setAssistantMeta(`Base oficial lista: ${allMessages.length} mensajes disponibles para recomendar.`);
@@ -1927,21 +1885,19 @@ async function load() {
 }
 
 /**
- * Bloquea cualquier escritura cuando lo que se muestra es el respaldo local.
- * Evita el error "No se encontró el mensaje con ese ID" por IDs que no están en Firebase.
+ * Explica por qué no hay datos editables en pantalla: sin sesión, sin permiso
+ * o sin conexión. No existe respaldo: si Firebase no responde, no se ve nada.
  */
 function readOnlyReason() {
   const code = String(firebaseLoadError && firebaseLoadError.code || '');
   if (!firebaseUser) {
-    return 'Estás viendo el respaldo local (solo lectura). Inicia sesión con Google para editar.';
+    return 'Inicia sesión con Google para ver los mensajes.';
   }
   if (code === 'permission-denied') {
-    // Ojo: esto no es "no puede editar", es que Firestore niega hasta la
-    // lectura. Lo que se ve en pantalla es un respaldo viejo y congelado.
-    return `Firebase está negando el acceso a ${firebaseUser.email}, así que esto es una copia antigua: puede faltar lo nuevo y reaparecer lo archivado. No edites desde aquí; avisa para revisar los permisos.`;
+    return `Firebase está negando el acceso a ${firebaseUser.email}. Pide que agreguen tu cuenta a los editores de mensajes.`;
   }
   const detalle = firebaseLoadError ? ` (${firebaseLoadError.message || firebaseLoadError})` : '';
-  return `No se pudo conectar con Firebase, así que estás en solo lectura${detalle}. Usa Recargar para reintentar.`;
+  return `No se pudo conectar con la base${detalle}. Usa Recargar para reintentar.`;
 }
 
 function requireEditableSource() {
