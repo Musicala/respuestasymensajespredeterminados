@@ -14,6 +14,6 @@
   window.MUSICALA_MESSAGES_FIREBASE = {
     enabled: true,
     collection: 'respuestasPredeterminadas',
-    audioStoragePath: 'respuestas-predeterminadas-audios'
+    audioStoragePath: 'respuestas-predeterminadas-audios', imageStoragePath: 'respuestas-predeterminadas-imagenes'
   };
 })();

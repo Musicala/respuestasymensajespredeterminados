@@ -15,7 +15,9 @@
  *  ========================= */
 const FIREBASE_MESSAGES_COLLECTION = (window.MUSICALA_MESSAGES_FIREBASE && window.MUSICALA_MESSAGES_FIREBASE.collection) || 'respuestasPredeterminadas';
 const FIREBASE_AUDIO_STORAGE_PATH = (window.MUSICALA_MESSAGES_FIREBASE && window.MUSICALA_MESSAGES_FIREBASE.audioStoragePath) || 'respuestas-predeterminadas-audios';
+const FIREBASE_IMAGE_STORAGE_PATH = (window.MUSICALA_MESSAGES_FIREBASE && window.MUSICALA_MESSAGES_FIREBASE.imageStoragePath) || 'respuestas-predeterminadas-imagenes';
 const MAX_AUDIO_SIZE_BYTES = 25 * 1024 * 1024;
+const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
 const MIN_TOKEN_LEN = 2;
 const MAX_ASSISTANT_RESULTS = 5;
 const ASSISTANT_FAVORITES_KEY = 'musicala.assistant.favorites.v1';
@@ -79,6 +81,7 @@ const msgMensaje       = $('#msgMensaje');
 const msgAudio         = $('#msgAudio');
 const msgRemoveAudio   = $('#msgRemoveAudio');
 const currentAudioBox  = $('#currentAudioBox');
+const msgImage = $('#msgImage'), msgRemoveImage = $('#msgRemoveImage'), currentImageBox = $('#currentImageBox');
 const btnRecordAudio   = $('#btnRecordAudio');
 const btnStopRecordAudio = $('#btnStopRecordAudio');
 const btnDiscardRecording = $('#btnDiscardRecording');
@@ -643,6 +646,10 @@ function messagesCollection() {
 }
 
 function audioStorageRef(messageId, fileName) {
+  return attachmentStorageRef(FIREBASE_AUDIO_STORAGE_PATH, messageId, fileName);
+}
+function imageStorageRef(messageId, fileName) { return attachmentStorageRef(FIREBASE_IMAGE_STORAGE_PATH, messageId, fileName); }
+function attachmentStorageRef(basePath, messageId, fileName) {
   const { storage } = ensureFirebaseReady();
   const safeName = String(fileName || 'audio')
     .normalize('NFD')
@@ -651,7 +658,7 @@ function audioStorageRef(messageId, fileName) {
     .replace(/-+/g, '-')
     .slice(0, 90);
   const stamp = Date.now();
-  return storage.ref().child(`${FIREBASE_AUDIO_STORAGE_PATH}/${messageId}/${stamp}-${safeName}`);
+  return storage.ref().child(`${basePath}/${messageId}/${stamp}-${safeName}`);
 }
 
 function cleanMessagePayload(payload = {}) {
@@ -682,7 +689,7 @@ function firebaseMessageFromDoc(doc) {
     activo: data.activo !== false,
     archivado: data.archivado === true,
     tipo: data.tipo || 'texto',
-    audio: data.audio || null
+    audio: data.audio || null, image: data.image || null
   };
 }
 
@@ -808,6 +815,7 @@ async function apiPost(action, payload) {
     });
     return { id, audio: payload && payload.audio ? payload.audio : null };
   }
+  if (action === 'setImage') { const id = String(payload && payload.id || '').trim(); const ref = messagesCollection().doc(id); const doc = await ref.get(); if (!doc.exists) throw new Error('No se encontró el mensaje.'); const image = payload && payload.image ? payload.image : null; await ref.update({ image, tipo: (image || (doc.data() || {}).audio) ? 'mixto' : 'texto', updatedAt: now, updatedBy: firebaseUser ? firebaseUser.email : '' }); return { id, image }; }
 
   throw new Error('Acción no soportada: ' + action);
 }
@@ -854,6 +862,7 @@ async function deleteAudioByPath(path) {
     console.warn('No se pudo borrar el audio anterior:', err);
   }
 }
+async function uploadImageForMessage(messageId, file) { if (!/^image\/(jpeg|png|webp|gif)$/.test(file.type) || file.size > MAX_IMAGE_SIZE_BYTES) throw new Error('La imagen debe ser JPG, PNG, WEBP o GIF y pesar máximo 10 MB.'); const ref = imageStorageRef(messageId, file.name); const snap = await ref.put(file, { contentType: file.type }); return { url: await snap.ref.getDownloadURL(), path: snap.ref.fullPath, name: file.name, contentType: file.type, size: file.size }; }
 
 function setRecordingStatus(text) {
   if (recordingStatus) recordingStatus.textContent = text;
@@ -1187,6 +1196,7 @@ function render() {
     const msgWrap = document.createElement('div');
     msgWrap.className = 'message-text';
     msgWrap.appendChild(safeMessageToNodes(m.mensaje || ''));
+    if (m.image && m.image.url) { const wrap=document.createElement('div'), link=document.createElement('a'), img=document.createElement('img'); wrap.className='message-image'; link.href=m.image.url; link.target='_blank'; link.rel='noopener noreferrer'; img.src=m.image.url; img.alt='Imagen adjunta'; img.loading='lazy'; link.appendChild(img); wrap.appendChild(link); msgWrap.appendChild(wrap); }
 
     if (m.audio && m.audio.url) {
       const audioWrap = document.createElement('div');
@@ -1853,7 +1863,7 @@ async function load() {
         atajo: String(m.atajo || '').trim(),
         mensaje: String(m.mensaje || '').trim(),
         activo: m.activo !== false,
-        audio: m.audio && m.audio.url ? m.audio : null
+        audio: m.audio && m.audio.url ? m.audio : null, image: m.image && m.image.url ? m.image : null
       }))
       .filter(m => m.categoria || m.atajo || m.mensaje)
       .sort(sortMessages);
@@ -1916,6 +1926,8 @@ async function saveFromModal() {
   const selectedAudioFile = msgAudio && msgAudio.files && msgAudio.files[0] ? msgAudio.files[0] : null;
   const audioFile = selectedAudioFile || recordedAudioFile;
   const shouldRemoveAudio = !!(msgRemoveAudio && msgRemoveAudio.checked);
+  const imageFile = msgImage && msgImage.files && msgImage.files[0] ? msgImage.files[0] : null;
+  const shouldRemoveImage = !!(msgRemoveImage && msgRemoveImage.checked);
 
   if (mediaRecorder && mediaRecorder.state === 'recording') {
     toast('Detén la grabación antes de guardar.', 'warn');
@@ -1939,6 +1951,7 @@ async function saveFromModal() {
 
   try {
     if (audioFile) validateAudioFile(audioFile);
+    if (imageFile && (!/^image\/(jpeg|png|webp|gif)$/.test(imageFile.type) || imageFile.size > MAX_IMAGE_SIZE_BYTES)) throw new Error('La imagen debe ser JPG, PNG, WEBP o GIF y pesar máximo 10 MB.');
   } catch (err) {
     toast(String(err.message || err), 'bad');
     return;
@@ -1986,6 +1999,8 @@ async function saveFromModal() {
       await apiPost('setAudio', { id: savedId, audio: null });
       toast('Audio quitado ✅', 'ok');
     }
+    if (imageFile && savedId) { const image = await uploadImageForMessage(savedId, imageFile); await apiPost('setImage', { id: savedId, image }); }
+    else if (shouldRemoveImage && savedId) { await apiPost('setImage', { id: savedId, image: null }); }
 
     isSaving = false;
     setSavingButton(false);
