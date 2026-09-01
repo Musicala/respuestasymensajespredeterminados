@@ -43,6 +43,9 @@ let firebaseStorage = null;
 let firebaseUser = null;
 let firebaseReady = false;
 let currentModalMessage = null;
+// true solo si el correo de la sesion es administrador (Alek y Cata por defecto,
+// mas quien tenga admin:true en la coleccion `usuarios`). Solo ellos exportan.
+let isAdminUser = false;
 let mediaRecorder = null;
 let recordingStream = null;
 let recordingChunks = [];
@@ -60,6 +63,7 @@ const resultCount      = $('#resultCount');
 const tbody            = $('#messageTableBody');
 const statusText       = $('#statusText');
 const btnReload        = $('#btnReload');
+const btnExport        = $('#btnExport');
 const btnNew           = $('#btnNew');
 const btnSignIn        = $('#btnSignIn');
 const btnSignOut       = $('#btnSignOut');
@@ -482,6 +486,7 @@ function scoreMatch(haystack, tokens, preExpanded = false) {
 
 function lockUI() {
   setDisabled(btnReload, isLoading || isSaving);
+  if (btnExport) setDisabled(btnExport, isLoading || isSaving);
   setDisabled(btnSignIn, isLoading || isSaving);
   setDisabled(btnSignOut, isLoading || isSaving);
   setDisabled(btnNew, isLoading || isSaving);
@@ -580,6 +585,8 @@ async function signOutFromFirebase() {
   await auth.signOut();
   firebaseUser = null;
   firebaseReady = false;
+  isAdminUser = false;
+  updateExportButton();
   updateAuthButton();
   toast('Sesión cerrada.', 'ok');
 }
@@ -1832,6 +1839,111 @@ async function copyMessage(text, message = null) {
   }
 }
 
+/** =========================
+ *  EXPORTAR (SOLO ADMINS)
+ *  ========================= */
+// Respaldo de arranque, igual que en firestore.rules: si la coleccion
+// `usuarios` falla, Alek y Cata siguen siendo admins.
+const ADMIN_EMAILS_BASE = [
+  'alekcaballeromusic@gmail.com',
+  'catalina.medina.leal@gmail.com'
+];
+
+/**
+ * Averigua si el correo de la sesion es admin y muestra u oculta el boton
+ * de exportar. La consulta a `usuarios/{correo}` esta permitida por las
+ * reglas para el propio correo, asi que no rompe a nadie mas.
+ */
+async function refreshAdminStatus() {
+  const email = String(firebaseUser && firebaseUser.email || '').trim().toLowerCase();
+  let admin = !!email && ADMIN_EMAILS_BASE.includes(email);
+
+  if (email && !admin) {
+    try {
+      const { db } = ensureFirebaseReady();
+      const doc = await db.collection('usuarios').doc(email).get();
+      const data = doc.exists ? (doc.data() || {}) : {};
+      admin = data.activo !== false && data.admin === true;
+    } catch (err) {
+      console.warn('No se pudo verificar el perfil de administrador:', err);
+    }
+  }
+
+  isAdminUser = admin;
+  updateExportButton();
+  return admin;
+}
+
+function updateExportButton() {
+  if (!btnExport) return;
+  btnExport.hidden = !isAdminUser;
+  setDisabled(btnExport, isLoading || isSaving);
+}
+
+/** Descarga un JSON en el navegador sin depender de servidor. */
+function downloadJson(fileName, data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/**
+ * Exporta TODO lo guardado en Firestore (incluidos archivados e inactivos),
+ * tal cual esta en la base, para tener un respaldo real.
+ */
+async function exportMessagesJson() {
+  if (isLoading || isSaving) return;
+  if (!(await refreshAdminStatus())) {
+    toast('Solo los administradores pueden exportar la base.', 'warn');
+    return;
+  }
+
+  try {
+    setStatus('Preparando exportación…');
+    setDisabled(btnExport, true);
+
+    const snap = await messagesCollection().get();
+    const mensajes = [];
+    snap.forEach((doc) => {
+      const data = doc.data() || {};
+      const plano = {};
+      Object.keys(data).forEach((k) => {
+        const v = data[k];
+        // Las marcas de tiempo de Firestore no sobreviven a JSON.stringify.
+        plano[k] = (v && typeof v.toDate === 'function') ? v.toDate().toISOString() : v;
+      });
+      mensajes.push({ id: doc.id, ...plano });
+    });
+
+    mensajes.sort((a, b) => String(a.categoria || '').localeCompare(String(b.categoria || ''), 'es')
+      || String(a.atajo || '').localeCompare(String(b.atajo || ''), 'es'));
+
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    downloadJson(`mensajes-predeterminados-${stamp}.json`, {
+      exportadoEn: new Date().toISOString(),
+      exportadoPor: firebaseUser ? firebaseUser.email : '',
+      coleccion: FIREBASE_MESSAGES_COLLECTION,
+      total: mensajes.length,
+      mensajes
+    });
+
+    setStatus(`Exportados ${mensajes.length} mensajes en JSON.`);
+    toast(`Exportados ${mensajes.length} mensajes.`, 'ok');
+  } catch (err) {
+    console.error(err);
+    setStatus('No se pudo exportar.');
+    toast(String(err.message || err), 'bad');
+  } finally {
+    updateExportButton();
+  }
+}
+
 async function load() {
   if (isLoading) return;
   isLoading = true;
@@ -1875,6 +1987,7 @@ async function load() {
     if (assistantResults && assistantResults.children.length) askAssistant();
 
     updateAuthButton();
+    refreshAdminStatus();
 
     if (!editableSource) {
       setStatus(`Sin conexión con la base. ${readOnlyReason()}`);
@@ -2095,6 +2208,7 @@ function wireEvents() {
 
   if (categorySelect) categorySelect.addEventListener('change', () => render());
   if (btnReload) btnReload.addEventListener('click', () => load());
+  if (btnExport) btnExport.addEventListener('click', () => exportMessagesJson());
 
   if (btnSignIn) {
     btnSignIn.addEventListener('click', async () => {
